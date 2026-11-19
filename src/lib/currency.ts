@@ -16,13 +16,22 @@ export function localeForCurrency(currency: string): string {
   return CURRENCY_LOCALE[currency] ?? 'en-US';
 }
 
-/** Best guess at the user's currency from the device locale (e.g. "en-IN" → INR). */
-export function deviceCurrency(): string {
+function deviceRegionCode(): string | undefined {
   try {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    const region = locale.split(/[-_]/).find((part, i) => i > 0 && /^[A-Z]{2}$/.test(part));
-    return (region && REGION_CURRENCY[region]) || 'USD';
+    return locale.split(/[-_]/).find((part, i) => i > 0 && /^[A-Z]{2}$/.test(part));
   } catch {
-    return 'USD';
+    return undefined;
   }
+}
+
+/** Best guess at the user's currency from the device locale (e.g. "en-IN" → INR). */
+export function deviceCurrency(): string {
+  const region = deviceRegionCode();
+  return (region && REGION_CURRENCY[region]) || 'USD';
+}
+
+/** Whether India's escalation routes apply by default on this device. */
+export function deviceRegion(): 'IN' | 'intl' {
+  return deviceRegionCode() === 'IN' ? 'IN' : 'intl';
 }

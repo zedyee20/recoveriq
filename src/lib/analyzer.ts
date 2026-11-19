@@ -17,6 +17,10 @@ function formatMoney(amount: number, currency: string): string {
  */
 
 const CATEGORY_KEYWORDS: Record<Exclude<ClaimCategory, 'other'>, string[]> = {
+  loan: [
+    'lent', 'borrowed', 'hand loan', 'personal loan', 'loan', 'repay', 'pay me back', 'pay back',
+    'owe me', 'owes me', 'udhaar', 'udhar', 'return my money',
+  ],
   deposit: [
     'deposit', 'security deposit', 'damage deposit', 'move-out', 'move out', 'lease',
     'tenancy', 'landlord', 'refundable', 'equipment return', 'bottle deposit', 'key deposit',
@@ -41,6 +45,7 @@ const CATEGORY_KEYWORDS: Record<Exclude<ClaimCategory, 'other'>, string[]> = {
 };
 
 const CLAIM_TRIGGERS = [
+  'lent', 'borrowed', 'loan', 'repay', 'owe', 'udhaar', 'udhar',
   'refund', 'deposit', 'reimburse', 'rejected', 'denied', 'declined', 'delayed', 'cancelled',
   'canceled', 'overcharged', 'charged twice', 'double charge', 'not eligible', 'compensation',
   'return', 'renewal', 'owed', 'credit',
@@ -164,6 +169,11 @@ export function findMerchant(text: string, emails: string[]): string | undefined
   const labelled = /^(?:landlord|merchant|seller|store|vendor|company|airline|carrier|business|sold by):\s*([^(\n<]+?)\s*(?:[(<]|$)/im.exec(text);
   if (labelled && labelled[1].length > 1) return labelled[1];
 
+  // "I lent Rohan ₹50,000" / "Rohan borrowed …"
+  const lent = /\b(?:[Ll]ent|[Gg]ave)\s+(?:money\s+to\s+)?([A-Z][a-z]+(?:\s+(?!Rs\b|Rupees\b)[A-Z][a-z]+)?)\b/.exec(text) ??
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:borrowed|owes me)\b/.exec(text);
+  if (lent && !/^(I|We|My|The|He|She|They)$/.test(lent[1])) return lent[1];
+
   // "Thank you for shopping at Acme" / "your order from Acme"
   const at = /\b(?:[Ss]hopping (?:at|with)|[Oo]rder(?:ed)? (?:from|with)|[Pp]urchase (?:at|from)|[Ss]tay(?:ing)? at|[Ff]lying with|[Bb]ooked with)\s+([A-Z][\w&'.-]*(?:\s+[A-Z][\w&'.-]*){0,3})/.exec(text);
   if (at) return at[1].replace(/[.,]$/, '').replace(/\s+[—-].*$/, '');
@@ -205,6 +215,7 @@ export const CATEGORY_LABELS: Record<ClaimCategory, string> = {
   reimbursement: 'Reimbursement',
   travel: 'Travel compensation',
   subscription: 'Unwanted charge',
+  loan: 'Personal loan',
   other: 'Money owed',
 };
 

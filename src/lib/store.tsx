@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { deviceCurrency } from './currency';
+import { deviceCurrency, deviceRegion } from './currency';
 import type { Claim, Profile } from './types';
 
 const STORAGE_KEY = 'recoveriq/v1';
@@ -13,7 +13,7 @@ interface PersistedState {
 
 const DEFAULT_STATE: PersistedState = {
   claims: [],
-  profile: { fullName: '', email: '', plan: 'free', currency: deviceCurrency() },
+  profile: { fullName: '', email: '', plan: 'free', currency: deviceCurrency(), region: deviceRegion() },
   onboarded: false,
 };
 

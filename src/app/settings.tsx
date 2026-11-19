@@ -1,6 +1,8 @@
 import { router } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Button, Card, CurrencyPicker, Field, SectionTitle, colors, space, styles } from '@/components/ui';
+import { Button, Card, Chip, CurrencyPicker, Field, SectionTitle, colors, space, styles } from '@/components/ui';
+import { REGION_LABELS } from '@/lib/ladders';
+import type { Region } from '@/lib/types';
 import { confirm } from '@/lib/dialog';
 import { PLANS, SUCCESS_FEE_RATE } from '@/lib/plans';
 import { useStore } from '@/lib/store';
@@ -23,6 +25,13 @@ export default function Settings() {
           hint="Used to sign the requests you send."
         />
         <CurrencyPicker label="Default currency" value={profile.currency} onChange={(c) => setProfile({ currency: c })} />
+        <Text style={styles.label}>Use rules and escalation steps for</Text>
+        <View style={{ flexDirection: 'row', gap: space.sm }}>
+          {(Object.keys(REGION_LABELS) as Region[]).map((r) => (
+            <Chip key={r} label={REGION_LABELS[r]} selected={profile.region === r} onPress={() => setProfile({ region: r })} />
+          ))}
+        </View>
+        <Text style={styles.hint}>Applies to new claims. You can change it for a single claim with “Edit details”.</Text>
       </Card>
 
       <SectionTitle>Plan</SectionTitle>

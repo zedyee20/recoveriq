@@ -1,140 +1,10 @@
+import { currentStage, isFinalStage, ladderFor, type Stage } from './ladders';
 import type { Claim, ClaimCategory, ClaimEvent, ClaimEventType, Profile } from './types';
 import { CATEGORY_LABELS } from './analyzer';
 import { localeForCurrency } from './currency';
 
-export interface Stage {
-  key: string;
-  title: string;
-  /** What the user does at this stage. */
-  action: string;
-  /** Days to wait for a response before moving to the next stage. */
-  waitDays: number;
-  /** Where the request goes. */
-  channel: 'email' | 'external';
-  tip: string;
-}
-
-const REQUEST: Stage = {
-  key: 'request',
-  title: 'Formal request',
-  action: 'Send a written request with your evidence attached.',
-  waitDays: 14,
-  channel: 'email',
-  tip: 'Most claims resolve here. A clear, dated request with evidence is hard to ignore.',
-};
-
-const FOLLOW_UP: Stage = {
-  key: 'follow_up',
-  title: 'Follow-up with deadline',
-  action: 'Send a second notice that sets a firm response deadline.',
-  waitDays: 10,
-  channel: 'email',
-  tip: 'Referencing your first request and giving a date shows you will escalate.',
-};
-
-const FINAL_DEMAND: Stage = {
-  key: 'final_demand',
-  title: 'Final demand',
-  action: 'Send a final demand stating you will file in small claims court.',
-  waitDays: 14,
-  channel: 'email',
-  tip: 'Small claims courts are built for amounts like this. Check your local filing limit and fee.',
-};
-
-const LADDERS: Record<ClaimCategory, Stage[]> = {
-  deposit: [
-    REQUEST,
-    FOLLOW_UP,
-    {
-      key: 'regulator',
-      title: 'Housing authority complaint',
-      action: 'File a complaint with your local tenant/housing authority or consumer agency.',
-      waitDays: 21,
-      channel: 'external',
-      tip: 'Many places set deadlines for returning deposits and penalties for missing them. Check your local rules.',
-    },
-    FINAL_DEMAND,
-  ],
-  refund: [
-    REQUEST,
-    FOLLOW_UP,
-    {
-      key: 'chargeback',
-      title: 'Card dispute (chargeback)',
-      action: 'Open a dispute with your card issuer or bank, attaching this claim file.',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Dispute windows are often 60–120 days from the statement date. Do not wait too long.',
-    },
-    FINAL_DEMAND,
-  ],
-  reimbursement: [
-    REQUEST,
-    FOLLOW_UP,
-    {
-      key: 'internal_appeal',
-      title: 'Formal appeal',
-      action: 'File a formal appeal with HR, finance, or your insurer’s appeals department.',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Insurers must usually give a written reason for a denial. Ask for it if you don’t have one.',
-    },
-    {
-      key: 'regulator',
-      title: 'Regulator complaint',
-      action: 'Escalate to the relevant regulator (insurance department, labor agency, etc.).',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Regulator complaints are free and often prompt a quick response.',
-    },
-  ],
-  travel: [
-    REQUEST,
-    FOLLOW_UP,
-    {
-      key: 'regulator',
-      title: 'Transport regulator complaint',
-      action: 'File a complaint with the transport/aviation regulator or an approved dispute body.',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Passenger rights depend on route and carrier. Keep boarding passes and delay notices.',
-    },
-    FINAL_DEMAND,
-  ],
-  subscription: [
-    REQUEST,
-    {
-      key: 'chargeback',
-      title: 'Card dispute (chargeback)',
-      action: 'Dispute the charge with your card issuer, and block future charges from this merchant.',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Mention any cancellation confirmation, or the missing renewal notice.',
-    },
-    {
-      key: 'regulator',
-      title: 'Consumer protection complaint',
-      action: 'Report the merchant to your consumer protection agency.',
-      waitDays: 30,
-      channel: 'external',
-      tip: 'Auto-renewal rules often require clear disclosure and easy cancellation.',
-    },
-  ],
-  other: [REQUEST, FOLLOW_UP, FINAL_DEMAND],
-};
-
-export function ladderFor(category: ClaimCategory): Stage[] {
-  return LADDERS[category];
-}
-
-export function currentStage(claim: Pick<Claim, 'category' | 'stage'>): Stage {
-  const ladder = ladderFor(claim.category);
-  return ladder[Math.min(claim.stage, ladder.length - 1)];
-}
-
-export function isFinalStage(claim: Pick<Claim, 'category' | 'stage'>): boolean {
-  return claim.stage >= ladderFor(claim.category).length - 1;
-}
+export { currentStage, isFinalStage, ladderFor, regionOf, REGION_LABELS } from './ladders';
+export type { Stage } from './ladders';
 
 export function addDays(iso: string, days: number): string {
   const d = new Date(iso);
@@ -216,6 +86,29 @@ export function reopen(claim: Claim, at = new Date().toISOString()): Claim {
   };
 }
 
+export function removeEvidence(claim: Claim, evidenceId: string, at = new Date().toISOString()): Claim {
+  const item = claim.evidence.find((e) => e.id === evidenceId);
+  if (!item) return claim;
+  return {
+    ...claim,
+    evidence: claim.evidence.filter((e) => e.id !== evidenceId),
+    events: [...claim.events, event('note', `Removed evidence: ${item.name}`, at)],
+  };
+}
+
+export type ClaimDetails = Pick<
+  Claim,
+  'merchant' | 'category' | 'amount' | 'currency' | 'purchaseDate' | 'reference' | 'contactEmail' | 'notes' | 'region'
+>;
+
+/** Edits a claim's facts. If the type or region changes, the claim keeps its progress on the new path. */
+export function updateDetails(claim: Claim, details: Partial<ClaimDetails>, at = new Date().toISOString()): Claim {
+  const next: Claim = { ...claim, ...details };
+  const maxStage = ladderFor(next).length - 1;
+  if (next.stage > maxStage) next.stage = maxStage;
+  return { ...next, events: [...claim.events, event('note', 'Details updated', at)] };
+}
+
 export type NextStep =
   | { kind: 'prepare'; stage: Stage }
   | { kind: 'waiting'; stage: Stage; daysLeft: number }
@@ -262,9 +155,9 @@ export interface Letter {
 function factsBlock(claim: Claim): string {
   const files = claim.evidence.filter((e) => e.kind !== 'text');
   const lines = [
-    `Amount owed: ${formatMoney(claim.amount, claim.currency)}`,
+    `${claim.category === 'loan' ? 'Amount lent' : 'Amount owed'}: ${formatMoney(claim.amount, claim.currency)}`,
     claim.reference ? `Reference: ${claim.reference}` : undefined,
-    claim.purchaseDate ? `Date of transaction: ${claim.purchaseDate}` : undefined,
+    claim.purchaseDate ? `${claim.category === 'loan' ? 'Date lent' : 'Date of transaction'}: ${claim.purchaseDate}` : undefined,
     files.length ? `Evidence attached: ${files.map((e) => e.name).join(', ')}` : undefined,
     hasQuoted(claim) ? 'Original correspondence: quoted below' : undefined,
   ];
@@ -287,6 +180,7 @@ const REASONS: Record<ClaimCategory, string> = {
   reimbursement: 'reimbursement of expenses I paid that are covered',
   travel: 'compensation and/or a refund for the disruption to my travel',
   subscription: 'a refund of a charge I did not authorize or had already cancelled',
+  loan: 'repayment of the money I lent you',
   other: 'payment of money that is owed to me',
 };
 
@@ -302,7 +196,26 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
   const sign = `Sincerely,\n${name}${profile.email ? `\n${profile.email}` : ''}`;
   const notes = claim.notes?.trim() ? `\n\nDetails:\n${claim.notes.trim()}` : '';
 
+  const when = claim.purchaseDate ? ` on ${claim.purchaseDate}` : '';
   switch (stage.key) {
+    case 'loan_request':
+      return {
+        subject: `Repayment of ${amount} I lent you${when}`,
+        body:
+          `Hi ${claim.merchant || 'there'},\n\nI hope you’re doing well. I’m writing about the ${amount} I lent you${when}. ` +
+          `I’d like to ask for it back now.\n\n${factsBlock(claim)}${notes}\n\n` +
+          `Could you please repay it by ${deadline}? If paying it all at once is difficult, let me know and we can agree on instalments.\n\n` +
+          `Thanks,\n${name}` + quotedOriginal(claim),
+      };
+    case 'loan_reminder':
+      return {
+        subject: `Reminder: ${amount} still to be repaid`,
+        body:
+          `Hi ${claim.merchant || 'there'},\n\nI’m following up${firstSent ? ` on my message from ${firstSent}` : ''} about the ${amount} I lent you${when}. ` +
+          `I haven’t received the money or a reply.\n\n${factsBlock(claim)}\n\n` +
+          `Please repay the full amount by ${deadline}. If I don’t hear from you by then, I will have to take formal steps to recover it, ` +
+          `starting with a legal notice.\n\nRegards,\n${name}` + quotedOriginal(claim),
+      };
     case 'request':
       return {
         subject: `${CATEGORY_LABELS[claim.category]} request — ${amount}${ref}`,
@@ -334,8 +247,8 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
       return {
         subject: `Case summary: ${CATEGORY_LABELS[claim.category]} — ${claim.merchant || 'merchant'}${ref}`,
         body:
-          `Complaint summary for: ${stage.title}\n\nComplainant: ${name}\nBusiness: ${claim.merchant || '—'}\n${factsBlock(claim)}${notes}\n\n` +
-          `What happened:\nI requested ${REASONS[claim.category]}. The business has not resolved it.\n\n` +
+          `Case summary for: ${stage.title}\n\nComplainant: ${name}\n${claim.category === 'loan' ? 'Borrower' : 'Business'}: ${claim.merchant || '—'}\n${factsBlock(claim)}${notes}\n\n` +
+          `What happened:\n${claim.category === 'loan' ? `I lent ${amount}${when}. I asked for repayment in writing and it has not been repaid.` : `I requested ${REASONS[claim.category]}. It has not been resolved.`}\n\n` +
           `Timeline:\n${claim.events.map((e) => `• ${formatDate(e.at)} — ${e.label}`).join('\n')}\n\n` +
           `Outcome requested: payment of ${amount}.` + quotedOriginal(claim),
       };

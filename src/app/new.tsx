@@ -17,6 +17,8 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS) as ClaimCategory[];
 export default function NewClaim() {
   const { addClaim, claims, profile } = useStore();
   const [text, setText] = useState('');
+  /** Which example was loaded, so we can warn if it's about to be saved as evidence for a real claim. */
+  const [sample, setSample] = useState<{ label: string; text: string } | null>(null);
   const [attachments, setAttachments] = useState<Evidence[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
 
@@ -114,7 +116,27 @@ export default function NewClaim() {
     }
     const now = new Date().toISOString();
     const evidence: Evidence[] = [...attachments];
-    if (text.trim()) {
+    let keepText = text.trim().length > 0;
+    const exampleEdited = sample && text === sample.text && analysis && merchant.trim() !== (analysis.merchant ?? '');
+    // Details still exactly as the example filled them in; cleared along with the example.
+    let fromExample = { purchaseDate, reference, contactEmail };
+    if (keepText && exampleEdited) {
+      const remove = await confirm(
+        'Remove the example?',
+        `This claim still has the “${sample.label}” example attached, and its text, reference, date and contact would appear in your letters. Remove them?`,
+        'Remove them',
+      );
+      if (remove) {
+        keepText = false;
+        const same = (v: string, a?: string) => (a !== undefined && v.trim() === a ? '' : v);
+        fromExample = {
+          purchaseDate: same(purchaseDate, analysis.date),
+          reference: same(reference, analysis.reference),
+          contactEmail: same(contactEmail, analysis.contactEmail),
+        };
+      }
+    }
+    if (keepText) {
       evidence.unshift({ id: uid('evt'), kind: 'text', name: 'Original message', text: text.trim(), addedAt: now });
     }
     const id = uid('clm');
@@ -125,12 +147,13 @@ export default function NewClaim() {
       category,
       amount: amountNum,
       currency,
-      purchaseDate: purchaseDate.trim() || undefined,
-      reference: reference.trim() || undefined,
-      contactEmail: contactEmail.trim() || undefined,
+      purchaseDate: fromExample.purchaseDate.trim() || undefined,
+      reference: fromExample.reference.trim() || undefined,
+      contactEmail: fromExample.contactEmail.trim() || undefined,
       notes: notes.trim() || undefined,
       evidence,
       stage: 0,
+      region: profile.region,
       status: 'draft',
       createdAt: now,
       events: [event('created', 'Claim created', now)],
@@ -189,7 +212,14 @@ export default function NewClaim() {
             <Text style={[styles.muted, { fontSize: 13 }]}>Or try an example:</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
               {SAMPLES.map((s) => (
-                <Chip key={s.label} label={s.label} onPress={() => setText(s.text)} />
+                <Chip
+                  key={s.label}
+                  label={s.label}
+                  onPress={() => {
+                    setText(s.text);
+                    setSample(s);
+                  }}
+                />
               ))}
             </View>
 

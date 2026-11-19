@@ -3,7 +3,7 @@ import * as MailComposer from 'expo-mail-composer';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { Button, Card, CategoryBadge, Field, SectionTitle, StatusPill, colors, space, styles } from '@/components/ui';
+import { Button, Card, CategoryBadge, Chip, CurrencyPicker, Field, SectionTitle, StatusPill, colors, space, styles } from '@/components/ui';
 import { CATEGORY_LABELS } from '@/lib/analyzer';
 import { confirm, notify } from '@/lib/dialog';
 import {
@@ -18,16 +18,21 @@ import {
   markRecovered,
   markStageSent,
   nextStep,
+  regionOf,
+  REGION_LABELS,
+  removeEvidence,
   reopen,
+  updateDetails,
 } from '@/lib/escalation';
 import { successFee, SUCCESS_FEE_RATE } from '@/lib/plans';
 import { useStore } from '@/lib/store';
-import type { Claim } from '@/lib/types';
+import type { Claim, ClaimCategory, Region } from '@/lib/types';
 
 export default function ClaimScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getClaim, updateClaim, removeClaim, profile } = useStore();
   const claim = getClaim(id);
+  const [editing, setEditing] = useState(false);
 
   if (!claim) {
     return (
@@ -73,7 +78,7 @@ export default function ClaimScreen() {
         <Ladder claim={claim} />
 
         <SectionTitle>Evidence ({claim.evidence.length})</SectionTitle>
-        <EvidenceList claim={claim} />
+        <EvidenceList claim={claim} onRemove={(eid) => update((c) => removeEvidence(c, eid))} />
 
         <SectionTitle>Timeline</SectionTitle>
         <Card style={{ gap: space.md }}>
@@ -89,6 +94,18 @@ export default function ClaimScreen() {
         </Card>
 
         <SectionTitle>Manage</SectionTitle>
+        {editing ? (
+          <EditDetails
+            claim={claim}
+            onCancel={() => setEditing(false)}
+            onSave={(d) => {
+              update((c) => updateDetails(c, d));
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <Button title="Edit details" variant="secondary" onPress={() => setEditing(true)} />
+        )}
         {claim.status === 'draft' || claim.status === 'active' ? (
           <Button
             title="Close claim"
@@ -177,7 +194,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
 
   if (step.kind === 'waiting' || step.kind === 'overdue') {
     const overdue = step.kind === 'overdue';
-    const nextTitle = !overdue || step.canEscalate ? ladderFor(claim.category)[claim.stage + 1]?.title : undefined;
+    const nextTitle = !overdue || step.canEscalate ? ladderFor(claim)[claim.stage + 1]?.title : undefined;
     return (
       <Card style={{ gap: space.md, borderColor: overdue ? colors.warn : colors.line, borderWidth: overdue ? 1.5 : undefined }}>
         <Text style={{ fontSize: 13, fontWeight: '700', color: overdue ? colors.warn : colors.info, letterSpacing: 0.4 }}>
@@ -236,7 +253,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
   return (
     <Card style={{ gap: space.md, borderColor: colors.brand, borderWidth: 1.5 }}>
       <Text style={{ fontSize: 13, fontWeight: '700', color: colors.brand, letterSpacing: 0.4 }}>
-        NEXT STEP · {claim.stage + 1} OF {ladderFor(claim.category).length}
+        NEXT STEP · {claim.stage + 1} OF {ladderFor(claim).length}
       </Text>
       <Text style={styles.h2}>{stage.title}</Text>
       <Text style={styles.body}>{stage.action}</Text>
@@ -316,7 +333,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
 }
 
 function Ladder({ claim }: { claim: Claim }) {
-  const ladder = ladderFor(claim.category);
+  const ladder = ladderFor(claim);
   const current = currentStage(claim);
   const done = claim.status === 'recovered' || claim.status === 'closed';
   return (
@@ -356,7 +373,7 @@ function Ladder({ claim }: { claim: Claim }) {
   );
 }
 
-function EvidenceList({ claim }: { claim: Claim }) {
+function EvidenceList({ claim, onRemove }: { claim: Claim; onRemove: (id: string) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   if (claim.evidence.length === 0) {
     return (
@@ -387,6 +404,18 @@ function EvidenceList({ claim }: { claim: Claim }) {
               <Text style={[styles.muted, { fontSize: 12 }]}>Added {formatDate(e.addedAt)}</Text>
             </View>
             {e.kind !== 'document' && <Text style={{ color: colors.brand, fontWeight: '600' }}>{open === e.id ? 'Hide' : 'View'}</Text>}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${e.name}`}
+              hitSlop={10}
+              onPress={async () => {
+                if (await confirm('Remove this evidence?', `“${e.name}” will no longer be attached or quoted in your letters.`, 'Remove', true)) {
+                  onRemove(e.id);
+                }
+              }}
+            >
+              <Text style={{ color: colors.danger, fontWeight: '600', marginLeft: space.sm }}>Remove</Text>
+            </Pressable>
           </Pressable>
           {open === e.id && e.kind === 'text' && (
             <Text style={[styles.muted, { backgroundColor: colors.bg, padding: space.md, borderRadius: 10, fontSize: 13 }]} selectable>
@@ -398,6 +427,66 @@ function EvidenceList({ claim }: { claim: Claim }) {
           )}
         </View>
       ))}
+    </Card>
+  );
+}
+
+const CATEGORIES = Object.keys(CATEGORY_LABELS) as ClaimCategory[];
+
+function EditDetails({ claim, onSave, onCancel }: { claim: Claim; onSave: (d: Parameters<typeof updateDetails>[1]) => void; onCancel: () => void }) {
+  const [merchant, setMerchant] = useState(claim.merchant);
+  const [category, setCategory] = useState<ClaimCategory>(claim.category);
+  const [amount, setAmount] = useState(String(claim.amount));
+  const [currency, setCurrency] = useState(claim.currency);
+  const [region, setRegion] = useState<Region>(regionOf(claim));
+  const [purchaseDate, setPurchaseDate] = useState(claim.purchaseDate ?? '');
+  const [reference, setReference] = useState(claim.reference ?? '');
+  const [contactEmail, setContactEmail] = useState(claim.contactEmail ?? '');
+  const [notes, setNotes] = useState(claim.notes ?? '');
+  const amountNum = Number(amount.replace(/,/g, ''));
+  const valid = merchant.trim().length > 0 && Number.isFinite(amountNum) && amountNum > 0;
+
+  return (
+    <Card>
+      <Field label="Who owes you?" value={merchant} onChangeText={setMerchant} />
+      <Text style={styles.label}>Type of claim</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md }}>
+        {CATEGORIES.map((c) => (
+          <Chip key={c} label={CATEGORY_LABELS[c]} selected={category === c} onPress={() => setCategory(c)} />
+        ))}
+      </View>
+      <Field label={category === 'loan' ? 'Amount lent' : 'Amount owed'} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+      <CurrencyPicker value={currency} onChange={setCurrency} />
+      <Text style={styles.label}>Rules and escalation steps for</Text>
+      <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.md }}>
+        {(Object.keys(REGION_LABELS) as Region[]).map((r) => (
+          <Chip key={r} label={REGION_LABELS[r]} selected={region === r} onPress={() => setRegion(r)} />
+        ))}
+      </View>
+      <Field label={category === 'loan' ? 'Date lent' : 'Date of purchase / event'} value={purchaseDate} onChangeText={setPurchaseDate} />
+      <Field label="Reference (optional)" value={reference} onChangeText={setReference} autoCapitalize="characters" />
+      <Field label="Their contact email" value={contactEmail} onChangeText={setContactEmail} keyboardType="email-address" autoCapitalize="none" />
+      <Field label="What happened? (optional)" value={notes} onChangeText={setNotes} multiline />
+      <View style={{ gap: space.sm }}>
+        <Button
+          title="Save changes"
+          disabled={!valid}
+          onPress={() =>
+            onSave({
+              merchant: merchant.trim(),
+              category,
+              amount: amountNum,
+              currency,
+              region,
+              purchaseDate: purchaseDate.trim() || undefined,
+              reference: reference.trim() || undefined,
+              contactEmail: contactEmail.trim() || undefined,
+              notes: notes.trim() || undefined,
+            })
+          }
+        />
+        <Button title="Cancel" variant="ghost" onPress={onCancel} />
+      </View>
     </Card>
   );
 }

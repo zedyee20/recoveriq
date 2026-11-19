@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { analyze, findAmounts, findReference } from './analyzer';
-import { authorize, buildLetter, escalate, isFinalStage, markRecovered, markStageSent, nextStep, uid } from './escalation';
+import {
+  authorize,
+  buildLetter,
+  currentStage,
+  escalate,
+  isFinalStage,
+  ladderFor,
+  markRecovered,
+  markStageSent,
+  nextStep,
+  regionOf,
+  removeEvidence,
+  uid,
+  updateDetails,
+} from './escalation';
 import { SAMPLES } from './samples';
 import type { Claim } from './types';
 
@@ -94,7 +108,7 @@ function makeClaim(over: Partial<Claim> = {}): Claim {
 }
 
 describe('escalation', () => {
-  const profile = { fullName: 'Jordan Lee', email: 'j@example.com', plan: 'free' as const, currency: 'USD' };
+  const profile = { fullName: 'Jordan Lee', email: 'j@example.com', plan: 'free' as const, currency: 'USD', region: 'intl' as const };
 
   it('walks a claim through send → wait → overdue → escalate → recovered', () => {
     let c = authorize(makeClaim(), '2026-11-01T00:00:00.000Z');
@@ -155,5 +169,65 @@ describe('escalation', () => {
 
     const chargeback = buildLetter({ ...c, stage: 2 }, profile);
     assert.match(chargeback.subject, /Case summary/);
+  });
+});
+
+describe('personal loans and India', () => {
+  const profile = { fullName: 'Mohan', email: '', plan: 'free' as const, currency: 'INR', region: 'IN' as const };
+
+  it('detects a personal loan and the borrower', () => {
+    const a = analyze('I lent Rohan Rs. 50,000 on 12 Nov 2026. He promised to repay it in a week but has not paid me back.', 'INR');
+    assert.equal(a.category, 'loan');
+    assert.equal(a.merchant, 'Rohan');
+    assert.equal(a.amount, 50000);
+    assert.equal(a.isLikelyClaim, true);
+  });
+
+  it('uses India escalation routes, inferring India from INR on older claims', () => {
+    const loan = makeClaim({ category: 'loan', currency: 'INR', merchant: 'Rohan' });
+    assert.equal(regionOf(loan), 'IN');
+    assert.deepEqual(
+      ladderFor(loan).map((s) => s.key),
+      ['loan_request', 'loan_reminder', 'legal_notice', 'recovery_suit'],
+    );
+    assert.ok(ladderFor({ ...loan, category: 'refund' }).some((s) => s.key === 'nch'));
+    assert.ok(!ladderFor({ ...loan, category: 'refund' }).some((s) => s.key === 'chargeback'));
+    assert.equal(regionOf({ ...loan, region: 'intl' }), 'intl');
+  });
+
+  it('writes friendly loan letters without refund wording', () => {
+    const loan = makeClaim({ category: 'loan', currency: 'INR', merchant: 'Rohan', amount: 50000, purchaseDate: '12-Nov-2026' });
+    const first = buildLetter(loan, profile, new Date('2026-11-19T00:00:00Z'));
+    assert.match(first.subject, /Repayment of ₹50,000\.00 I lent you on 12-Nov-2026/);
+    assert.match(first.body, /^Hi Rohan,/);
+    assert.match(first.body, /Amount lent: ₹50,000\.00/);
+    assert.match(first.body, /instalments/);
+    assert.doesNotMatch(first.body, /refund/i);
+
+    const reminder = buildLetter(escalate(markStageSent(loan, '2026-11-19T00:00:00Z')), profile);
+    assert.match(reminder.body, /legal notice/);
+    assert.doesNotMatch(reminder.body, /refund/i);
+
+    const summary = buildLetter({ ...loan, stage: 2 }, profile);
+    assert.match(summary.body, /Borrower: Rohan/);
+  });
+
+  it('removes evidence and records it', () => {
+    const c = makeClaim({
+      evidence: [{ id: 'e1', kind: 'text', name: 'Original message', text: 'StreamPlus Receipt', addedAt: '' }],
+    });
+    const out = removeEvidence(c, 'e1');
+    assert.equal(out.evidence.length, 0);
+    assert.match(out.events.at(-1)!.label, /Removed evidence/);
+    assert.doesNotMatch(buildLetter(out, profile).body, /StreamPlus/);
+  });
+
+  it('keeps progress when the claim type changes, clamped to the new path', () => {
+    const c = makeClaim({ category: 'refund', currency: 'INR', stage: 1 });
+    const asLoan = updateDetails(c, { category: 'loan' });
+    assert.equal(asLoan.stage, 1);
+    assert.equal(currentStage(asLoan).key, 'loan_reminder');
+    const shortPath = updateDetails({ ...c, stage: 3 }, { category: 'other', region: 'intl' });
+    assert.equal(shortPath.stage, 2);
   });
 });

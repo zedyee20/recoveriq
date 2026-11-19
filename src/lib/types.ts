@@ -4,7 +4,11 @@ export type ClaimCategory =
   | 'reimbursement'
   | 'travel'
   | 'subscription'
+  | 'loan'
   | 'other';
+
+/** Whose rules and escalation routes apply. */
+export type Region = 'IN' | 'intl';
 
 export type ClaimStatus = 'draft' | 'active' | 'recovered' | 'closed';
 
@@ -60,6 +64,7 @@ export interface Claim {
   /** ISO timestamp when the user authorized RecoverIQ to prepare requests. */
   authorizedAt?: string;
   recoveredAmount?: number;
+  region?: Region;
 }
 
 export interface Profile {
@@ -68,6 +73,7 @@ export interface Profile {
   plan: 'free' | 'pro' | 'success';
   /** Default currency for new claims and dashboard totals. */
   currency: string;
+  region: Region;
 }
 
 export interface AnalysisSignal {

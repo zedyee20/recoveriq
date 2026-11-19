@@ -130,6 +130,7 @@ export const CATEGORY_ICON: Record<ClaimCategory, string> = {
   reimbursement: '🧾',
   travel: '✈︎',
   subscription: '🔁',
+  loan: '🤝',
   other: '💵',
 };
 
