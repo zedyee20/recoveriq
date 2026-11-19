@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Button, Card, Field, SectionTitle, colors, space, styles } from '@/components/ui';
+import { Button, Card, CurrencyPicker, Field, SectionTitle, colors, space, styles } from '@/components/ui';
 import { confirm } from '@/lib/dialog';
 import { PLANS, SUCCESS_FEE_RATE } from '@/lib/plans';
 import { useStore } from '@/lib/store';
@@ -22,6 +22,7 @@ export default function Settings() {
           autoComplete="email"
           hint="Used to sign the requests you send."
         />
+        <CurrencyPicker label="Default currency" value={profile.currency} onChange={(c) => setProfile({ currency: c })} />
       </Card>
 
       <SectionTitle>Plan</SectionTitle>

@@ -1,4 +1,13 @@
+import { localeForCurrency } from './currency';
 import type { Analysis, AnalysisSignal, ClaimCategory } from './types';
+
+function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(localeForCurrency(currency), { style: 'currency', currency }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
+}
 
 /**
  * On-device heuristic analyzer. It extracts the facts a claim needs (merchant,
@@ -37,20 +46,25 @@ const CLAIM_TRIGGERS = [
   'return', 'renewal', 'owed', 'credit',
 ];
 
-const CURRENCY_SYMBOLS: Record<string, string> = { $: 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY' };
-const CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'NZD'];
+const CURRENCY_SYMBOLS: Record<string, string> = { $: 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₹': 'INR' };
+const CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'INR', 'NZD', 'AED', 'SGD'];
 
-const AMOUNT_CONTEXT = /(refund|deposit|total|amount|owed|charged|balance|due|reimburs|paid|price|fare)/i;
+// What the money is called just before the figure. "Owed" words beat "paid" words: the balance due is the claim.
+const AMOUNT_OWED = /(refund|balance|owed|due|reimburs|compensation|outstanding)/i;
+const AMOUNT_CONTEXT = /(deposit|total|amount|charged|paid|price|fare)/i;
 
 interface AmountHit {
   value: number;
   currency?: string;
   index: number;
-  contextual: boolean;
+  /** 2 = labelled as owed, 1 = labelled as a payment, 0 = unlabelled. */
+  weight: number;
 }
 
 function parseNumber(raw: string): number | undefined {
   let s = raw.replace(/\s/g, '');
+  // Indian grouping: "1,80,000.00" or "12,34,567"
+  if (/^\d{1,2}(,\d{2})+,\d{3}(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
   // "1.234,56" (EU) vs "1,234.56" (US)
   if (/,\d{2}$/.test(s) && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
   else if (/^\d{1,3}(,\d{3})*(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
@@ -61,11 +75,13 @@ function parseNumber(raw: string): number | undefined {
 
 export function findAmounts(text: string): AmountHit[] {
   const hits: AmountHit[] = [];
-  const num = '(\\d{1,3}(?:[.,\\s]\\d{3})*(?:[.,]\\d{2})?|\\d+(?:[.,]\\d{2})?)';
+  // Indian lakh grouping first (1,80,000.00), then western (1,234.56 / 1.234,56), then plain.
+  const num = '(\\d{1,2}(?:,\\d{2})+,\\d{3}(?:\\.\\d{2})?|\\d{1,3}(?:[.,\\s]\\d{3})*(?:[.,]\\d{2})?|\\d+(?:[.,]\\d{2})?)';
   const patterns: { re: RegExp; cur: (m: RegExpExecArray) => string | undefined; n: number }[] = [
-    { re: new RegExp(`([$€£¥])\\s?${num}`, 'g'), cur: (m) => CURRENCY_SYMBOLS[m[1]], n: 2 },
+    { re: new RegExp(`([$€£¥₹])\\s?${num}`, 'g'), cur: (m) => CURRENCY_SYMBOLS[m[1]], n: 2 },
+    { re: new RegExp(`\\b(?:Rs\\.?|Rupees)\\s?${num}`, 'gi'), cur: () => 'INR', n: 1 },
     { re: new RegExp(`\\b(${CURRENCY_CODES.join('|')})\\s?${num}`, 'g'), cur: (m) => m[1], n: 2 },
-    { re: new RegExp(`${num}\\s?(${CURRENCY_CODES.join('|')}|[€£])`, 'g'), cur: (m) => CURRENCY_SYMBOLS[m[2]] ?? m[2], n: 1 },
+    { re: new RegExp(`${num}\\s?(${CURRENCY_CODES.join('|')}|[€£₹])`, 'g'), cur: (m) => CURRENCY_SYMBOLS[m[2]] ?? m[2], n: 1 },
   ];
   for (const p of patterns) {
     let m: RegExpExecArray | null;
@@ -75,18 +91,19 @@ export function findAmounts(text: string): AmountHit[] {
       if (hits.some((h) => Math.abs(h.index - m!.index) < 4)) continue;
       const lineStart = text.lastIndexOf('\n', m.index) + 1;
       const before = text.slice(Math.max(lineStart, m.index - 40), m.index);
-      hits.push({ value, currency: p.cur(m), index: m.index, contextual: AMOUNT_CONTEXT.test(before) });
+      const weight = AMOUNT_OWED.test(before) ? 2 : AMOUNT_CONTEXT.test(before) ? 1 : 0;
+      hits.push({ value, currency: p.cur(m), index: m.index, weight });
     }
   }
   return hits.sort((a, b) => a.index - b.index);
 }
 
 function pickAmount(hits: AmountHit[]): AmountHit | undefined {
-  const contextual = hits.filter((h) => h.contextual);
-  const pool = contextual.length ? contextual : hits;
-  // Prefer a refund/deposit-labelled figure; otherwise the largest one (usually the total).
-  const labelled = pool.find((h) => h.contextual);
-  return labelled ?? pool.reduce<AmountHit | undefined>((a, b) => (!a || b.value > a.value ? b : a), undefined);
+  if (!hits.length) return undefined;
+  const best = Math.max(...hits.map((h) => h.weight));
+  const pool = hits.filter((h) => h.weight === best);
+  // Labelled figures: take the first. Unlabelled: the largest is usually the total.
+  return best > 0 ? pool[0] : pool.reduce((a, b) => (b.value > a.value ? b : a));
 }
 
 const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec';
@@ -191,7 +208,7 @@ export const CATEGORY_LABELS: Record<ClaimCategory, string> = {
   other: 'Money owed',
 };
 
-export function analyze(text: string): Analysis {
+export function analyze(text: string, fallbackCurrency = 'USD'): Analysis {
   const clean = text.replace(/\r\n/g, '\n').trim();
   const emails = findEmails(clean);
   const amountHit = pickAmount(findAmounts(clean));
@@ -206,7 +223,8 @@ export function analyze(text: string): Analysis {
 
   const signals: AnalysisSignal[] = [];
   if (merchant) signals.push({ label: 'Merchant', value: merchant });
-  if (amountHit) signals.push({ label: 'Amount', value: `${amountHit.currency ?? 'USD'} ${amountHit.value.toFixed(2)}` });
+  const currency = amountHit?.currency ?? fallbackCurrency;
+  if (amountHit) signals.push({ label: 'Amount', value: formatMoney(amountHit.value, currency) });
   if (date) signals.push({ label: 'Date', value: date });
   if (reference) signals.push({ label: 'Reference', value: reference });
   if (contactEmail) signals.push({ label: 'Contact', value: contactEmail });
@@ -225,7 +243,7 @@ export function analyze(text: string): Analysis {
   const isLikelyClaim = triggers.length > 0 && confidence >= 0.4;
   const label = CATEGORY_LABELS[category];
   const who = merchant ?? 'the merchant';
-  const money = amountHit ? `${amountHit.currency ?? 'USD'} ${amountHit.value.toFixed(2)}` : 'an unconfirmed amount';
+  const money = amountHit ? formatMoney(amountHit.value, currency) : 'an unconfirmed amount';
   const summary = isLikelyClaim
     ? `Looks like a ${label.toLowerCase()} of ${money} from ${who}${rejected ? ' that was previously rejected' : ''}.`
     : clean.length < 20
@@ -238,7 +256,7 @@ export function analyze(text: string): Analysis {
     category: isLikelyClaim || score > 0 ? category : 'other',
     merchant,
     amount: amountHit?.value,
-    currency: amountHit?.currency ?? 'USD',
+    currency,
     date,
     reference,
     contactEmail,

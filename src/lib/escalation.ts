@@ -1,5 +1,6 @@
 import type { Claim, ClaimCategory, ClaimEvent, ClaimEventType, Profile } from './types';
 import { CATEGORY_LABELS } from './analyzer';
+import { localeForCurrency } from './currency';
 
 export interface Stage {
   key: string;
@@ -232,9 +233,14 @@ export function nextStep(claim: Claim, now: Date = new Date()): NextStep {
 
 /* ---------- Formatting ---------- */
 
-export function formatMoney(amount: number, currency = 'USD'): string {
+/** `whole` drops the decimals, for headline totals where space is tight. */
+export function formatMoney(amount: number, currency = 'USD', whole = false): string {
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+    return new Intl.NumberFormat(localeForCurrency(currency), {
+      style: 'currency',
+      currency,
+      ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+    }).format(amount);
   } catch {
     return `${currency} ${amount.toFixed(2)}`;
   }

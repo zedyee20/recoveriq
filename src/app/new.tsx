@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { Button, Card, Chip, Field, SectionTitle, colors, space, styles } from '@/components/ui';
+import { Button, Card, Chip, CurrencyPicker, Field, SectionTitle, colors, space, styles } from '@/components/ui';
 import { analyze, CATEGORY_LABELS } from '@/lib/analyzer';
 import { confirm } from '@/lib/dialog';
 import { event, uid } from '@/lib/escalation';
@@ -25,7 +25,7 @@ export default function NewClaim() {
   const [merchant, setMerchant] = useState('');
   const [category, setCategory] = useState<ClaimCategory>('refund');
   const [amount, setAmount] = useState('');
-  const [currency, setCurrency] = useState('USD');
+  const [currency, setCurrency] = useState(profile.currency);
   const [purchaseDate, setPurchaseDate] = useState('');
   const [reference, setReference] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -71,7 +71,7 @@ export default function NewClaim() {
   }
 
   function runAnalysis() {
-    const a = analyze(text);
+    const a = analyze(text, profile.currency);
     setAnalysis(a);
     setTitle(a.suggestedTitle);
     setMerchant(a.merchant ?? '');
@@ -84,11 +84,12 @@ export default function NewClaim() {
   }
 
   function skipToDetails() {
+    setCurrency(profile.currency);
     setAnalysis({
       isLikelyClaim: false,
       confidence: 0,
       category: 'refund',
-      currency: 'USD',
+      currency: profile.currency,
       signals: [],
       summary:
         attachments.length > 0
@@ -123,7 +124,7 @@ export default function NewClaim() {
       merchant: merchant.trim(),
       category,
       amount: amountNum,
-      currency: currency.trim().toUpperCase() || 'USD',
+      currency,
       purchaseDate: purchaseDate.trim() || undefined,
       reference: reference.trim() || undefined,
       contactEmail: contactEmail.trim() || undefined,
@@ -208,14 +209,8 @@ export default function NewClaim() {
                   <Chip key={c} label={CATEGORY_LABELS[c]} selected={category === c} onPress={() => setCategory(c)} />
                 ))}
               </View>
-              <View style={{ flexDirection: 'row', gap: space.sm }}>
-                <View style={{ flex: 2 }}>
-                  <Field label="Amount owed" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Field label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" maxLength={3} />
-                </View>
-              </View>
+              <Field label="Amount owed" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />
+              <CurrencyPicker value={currency} onChange={setCurrency} />
               <Field label="Date of purchase / event" value={purchaseDate} onChangeText={setPurchaseDate} placeholder="e.g. Oct 3, 2026" />
               <Field label="Order / booking reference" value={reference} onChangeText={setReference} autoCapitalize="characters" />
               <Field

@@ -6,6 +6,7 @@ import {
   Card,
   CategoryBadge,
   Chip,
+  CurrencyPicker,
   Field,
   SectionTitle,
   StatusPill,
@@ -21,24 +22,26 @@ import type { Claim } from '@/lib/types';
 type Filter = 'all' | 'open' | 'recovered' | 'closed';
 
 export default function Home() {
-  const { ready, onboarded, claims } = useStore();
+  const { ready, onboarded, claims, profile } = useStore();
   const [filter, setFilter] = useState<Filter>('all');
 
   const stats = useMemo(() => {
     const open = claims.filter((c) => c.status === 'draft' || c.status === 'active');
-    // Totals assume one currency; mixed-currency portfolios show the dominant one.
-    const currency = claims[0]?.currency ?? 'USD';
+    // Amounts in different currencies can't be added, so totals cover the default currency only.
+    const currency = profile.currency;
+    const same = (c: Claim) => c.currency === currency;
     return {
       currency,
-      inPlay: open.reduce((s, c) => s + c.amount, 0),
-      recovered: claims.reduce((s, c) => s + (c.status === 'recovered' ? (c.recoveredAmount ?? c.amount) : 0), 0),
+      otherCurrencies: claims.some((c) => !same(c)),
+      inPlay: open.filter(same).reduce((s, c) => s + c.amount, 0),
+      recovered: claims.filter(same).reduce((s, c) => s + (c.status === 'recovered' ? (c.recoveredAmount ?? c.amount) : 0), 0),
       openCount: open.length,
       attention: open.filter((c) => {
         const n = nextStep(c);
         return n.kind === 'prepare' || n.kind === 'overdue';
       }),
     };
-  }, [claims]);
+  }, [claims, profile.currency]);
 
   const visible = claims.filter((c) =>
     filter === 'all' ? true : filter === 'open' ? c.status === 'draft' || c.status === 'active' : c.status === filter,
@@ -77,7 +80,7 @@ export default function Home() {
           <Card style={{ flex: 1, backgroundColor: colors.brand, borderColor: colors.brand }}>
             <Text style={{ color: '#CDEDE2', fontSize: 13, fontWeight: '600' }}>Money in play</Text>
             <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 4 }} adjustsFontSizeToFit numberOfLines={1}>
-              {formatMoney(stats.inPlay, stats.currency)}
+              {formatMoney(stats.inPlay, stats.currency, true)}
             </Text>
             <Text style={{ color: '#CDEDE2', fontSize: 13, marginTop: 2 }}>
               {stats.openCount} open {stats.openCount === 1 ? 'claim' : 'claims'}
@@ -86,11 +89,14 @@ export default function Home() {
           <Card style={{ flex: 1 }}>
             <Text style={{ color: colors.muted, fontSize: 13, fontWeight: '600' }}>Recovered</Text>
             <Text style={{ color: colors.brandDark, fontSize: 26, fontWeight: '800', marginTop: 4 }} adjustsFontSizeToFit numberOfLines={1}>
-              {formatMoney(stats.recovered, stats.currency)}
+              {formatMoney(stats.recovered, stats.currency, true)}
             </Text>
             <Text style={{ color: colors.muted, fontSize: 13, marginTop: 2 }}>all time</Text>
           </Card>
         </View>
+        {stats.otherCurrencies && (
+          <Text style={[styles.muted, { fontSize: 12 }]}>Totals show {stats.currency} claims only. Change your default currency in Settings.</Text>
+        )}
 
         <Button title="+  Find money from a receipt or email" onPress={() => router.push('/new')} />
 
@@ -173,6 +179,7 @@ function Welcome() {
   const { setOnboarded, setProfile, profile } = useStore();
   const [name, setName] = useState(profile.fullName);
   const [email, setEmail] = useState(profile.email);
+  const [currency, setCurrency] = useState(profile.currency);
 
   const steps = [
     ['📸', 'Upload', 'A receipt, refund email, or screenshot.'],
@@ -217,12 +224,13 @@ function Welcome() {
             textContentType="emailAddress"
             hint="Used only to sign your requests. Your data stays on this device."
           />
+          <CurrencyPicker label="Your currency" value={currency} onChange={setCurrency} />
         </Card>
 
         <Button
           title="Get started"
           onPress={() => {
-            setProfile({ fullName: name.trim(), email: email.trim() });
+            setProfile({ fullName: name.trim(), email: email.trim(), currency });
             setOnboarded(true);
           }}
         />

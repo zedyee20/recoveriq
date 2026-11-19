@@ -44,6 +44,22 @@ describe('analyzer', () => {
     assert.equal(a.contactEmail, 'billing@streamplus.tv');
   });
 
+  it('reads rupees: ₹, Rs. and Indian lakh grouping', () => {
+    assert.equal(findAmounts('Paid Rs. 1,80,000')[0].value, 180000);
+    assert.equal(findAmounts('Refund ₹1,68,000.50 due')[0].value, 168000.5);
+    assert.equal(findAmounts('Total: INR 2,499.00')[0].currency, 'INR');
+    const a = analyze(sample('Rent deposit (₹)'));
+    assert.equal(a.category, 'deposit');
+    assert.equal(a.currency, 'INR');
+    assert.equal(a.amount, 168000, 'balance due should beat deposit paid');
+    assert.equal(a.merchant, 'Mr. R. Kumar');
+    assert.match(a.summary, /₹1,68,000\.00/);
+  });
+
+  it('falls back to the default currency when the text has none', () => {
+    assert.equal(analyze('My refund of 500 for order #A12345 was rejected', 'INR').currency, 'INR');
+  });
+
   it('does not flag unrelated text', () => {
     const a = analyze('Hey, are we still on for lunch tomorrow?');
     assert.equal(a.isLikelyClaim, false);
@@ -78,7 +94,7 @@ function makeClaim(over: Partial<Claim> = {}): Claim {
 }
 
 describe('escalation', () => {
-  const profile = { fullName: 'Jordan Lee', email: 'j@example.com', plan: 'free' as const };
+  const profile = { fullName: 'Jordan Lee', email: 'j@example.com', plan: 'free' as const, currency: 'USD' };
 
   it('walks a claim through send → wait → overdue → escalate → recovered', () => {
     let c = authorize(makeClaim(), '2026-11-01T00:00:00.000Z');

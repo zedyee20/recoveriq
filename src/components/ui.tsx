@@ -10,6 +10,7 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
+import { COMMON_CURRENCIES } from '@/lib/currency';
 import type { ClaimCategory, ClaimStatus } from '@/lib/types';
 
 export const colors = {
@@ -150,6 +151,22 @@ export function Chip({ label, selected, onPress }: { label: string; selected?: b
     >
       <Text style={[styles.chipText, selected && { color: '#fff' }]}>{label}</Text>
     </Pressable>
+  );
+}
+
+const CURRENCY_SIGN: Record<string, string> = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', CAD: 'C$', AUD: 'A$', SGD: 'S$' };
+
+export function CurrencyPicker({ value, onChange, label = 'Currency' }: { value: string; onChange: (c: string) => void; label?: string }) {
+  const options = COMMON_CURRENCIES.includes(value as (typeof COMMON_CURRENCIES)[number]) ? COMMON_CURRENCIES : [value, ...COMMON_CURRENCIES];
+  return (
+    <View style={{ marginBottom: space.md }}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+        {options.map((c) => (
+          <Chip key={c} label={CURRENCY_SIGN[c] ? `${CURRENCY_SIGN[c]} ${c}` : c} selected={value === c} onPress={() => onChange(c)} />
+        ))}
+      </View>
+    </View>
   );
 }
 

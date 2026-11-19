@@ -66,6 +66,8 @@ export interface Profile {
   fullName: string;
   email: string;
   plan: 'free' | 'pro' | 'success';
+  /** Default currency for new claims and dashboard totals. */
+  currency: string;
 }
 
 export interface AnalysisSignal {

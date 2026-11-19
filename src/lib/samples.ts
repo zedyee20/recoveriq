@@ -28,6 +28,18 @@ Security deposit held: $1,800.00
 Your deposit will be returned within the period required by law, less any deductions for damage.`,
   },
   {
+    label: 'Rent deposit (₹)',
+    text: `Subject: Final settlement — Flat 302, Lakeview Residency
+Landlord: Mr. R. Kumar (rkumar.rentals@example.in)
+
+Lease ended: 30/09/2026
+Security deposit paid: Rs. 1,80,000
+Deduction for painting: ₹12,000
+
+Balance deposit refund due: ₹1,68,000
+The refund will be processed after inspection.`,
+  },
+  {
     label: 'Flight delay',
     text: `Booking reference: QXR7TL
 Flying with Northwind Air — flight NW 482
