@@ -22,6 +22,7 @@ export default function RootLayout() {
           <Stack.Screen name="new" options={{ title: 'New claim', presentation: 'modal' }} />
           <Stack.Screen name="claim/[id]" options={{ title: 'Claim' }} />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+          <Stack.Screen name="complaint/[id]" options={{ title: 'Consumer complaint' }} />
         </Stack>
       </StoreProvider>
     </SafeAreaProvider>

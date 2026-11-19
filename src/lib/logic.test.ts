@@ -361,3 +361,60 @@ describe('partial payments', () => {
     assert.equal(parseDayInput('yesterday'), undefined);
   });
 });
+
+describe('National Consumer Helpline complaint', async () => {
+  const { buildNchComplaint, canFileWithNch, isAtNchStep, nchFiling, saveNchDocket } = await import('./complaint');
+  const profile = { fullName: 'Mohan', email: 'mohan@example.com', plan: 'free' as const, currency: 'INR', region: 'IN' as const };
+  const refundAtNch = () => {
+    let c = makeClaim({ merchant: 'Kaveri Mart', category: 'refund', currency: 'INR', amount: 2499, reference: 'KM-1001', purchaseDate: '02-11-2026' });
+    c = markStageSent(c, '2026-11-01T00:00:00.000Z');
+    c = escalate(c);
+    c = markStageSent(c, '2026-11-15T00:00:00.000Z');
+    return escalate(c);
+  };
+
+  it('fills every helpline field from the claim', () => {
+    const c = refundAtNch();
+    assert.equal(isAtNchStep(c), true);
+    const { fields, fullText, documents } = buildNchComplaint(c, profile);
+    const get = (k: string) => fields.find((f) => f.key === k)!.value;
+    assert.equal(get('name'), 'Mohan');
+    assert.equal(get('company'), 'Kaveri Mart');
+    assert.equal(get('reference'), 'KM-1001');
+    assert.equal(get('amount'), '2499');
+    assert.equal(get('relief'), 'Refund of ₹2,499.00');
+    assert.match(get('description'), /against Kaveri Mart regarding order\/reference KM-1001 dated 02-11-2026/);
+    assert.match(get('description'), /asked the company in writing on Nov 1, 2026 and followed up 1 more time/);
+    assert.match(get('description'), /Timeline:\n02-11-2026: Purchase/);
+    assert.match(fullText, /Company \/ brand name: Kaveri Mart/);
+    assert.ok(documents.some((d) => /Invoice/.test(d)));
+  });
+
+  it('uses the outstanding balance after partial payments', () => {
+    const c = recordPayment(refundAtNch(), 1000, '2026-11-18T12:00:00.000Z');
+    const { fields } = buildNchComplaint(c, profile);
+    assert.equal(fields.find((f) => f.key === 'amount')!.value, '1499');
+    assert.match(fields.find((f) => f.key === 'description')!.value, /paid ₹1,000\.00, and ₹1,499\.00 is still outstanding/);
+  });
+
+  it('stores the docket number and quotes it in letters', () => {
+    let c = saveNchDocket(refundAtNch(), ' 4512378 ', '2026-11-20T10:00:00.000Z');
+    assert.equal(nchFiling(c)!.reference, '4512378');
+    c = saveNchDocket(c, '4512379', '2026-11-21T10:00:00.000Z');
+    assert.equal(c.filings!.length, 1, 'replaces rather than duplicates');
+    assert.match(buildLetter({ ...c, stage: 3 }, profile).body, /National Consumer Helpline docket no\.: 4512379/);
+    assert.equal(saveNchDocket(c, '   '), c);
+  });
+
+  it('is offered for Indian consumer claims, not personal loans or other countries', () => {
+    assert.equal(canFileWithNch(makeClaim({ currency: 'INR', category: 'deposit' })), true);
+    assert.equal(canFileWithNch(makeClaim({ currency: 'INR', category: 'loan' })), false);
+    assert.equal(canFileWithNch(makeClaim({ currency: 'USD', category: 'refund' })), false);
+  });
+
+  it('points Consumer Commission filing to e-Jagriti', () => {
+    const c = { ...refundAtNch(), stage: 3 };
+    assert.match(currentStage(c).action, /e-Jagriti/);
+    assert.doesNotMatch(currentStage(c).action, /e-Daakhil/);
+  });
+});

@@ -271,6 +271,7 @@ function factsBlock(claim: Claim): string {
     `${claim.category === 'loan' ? 'Amount lent' : 'Amount owed'}: ${formatMoney(claim.amount, claim.currency)}`,
     ...paymentLines(claim),
     claim.reference ? `Reference: ${claim.reference}` : undefined,
+    ...(claim.filings ?? []).map((f) => `National Consumer Helpline docket no.: ${f.reference} (registered ${formatDate(f.filedAt)})`),
     claim.purchaseDate ? `${claim.category === 'loan' ? 'Date lent' : 'Date of transaction'}: ${claim.purchaseDate}` : undefined,
     files.length ? `Evidence attached: ${files.map((e) => e.name).join(', ')}` : undefined,
     hasQuoted(claim) ? 'Original correspondence: quoted below' : undefined,

@@ -54,6 +54,14 @@ export interface Payment {
   receivedAt: string;
 }
 
+/** A complaint registered outside the app, e.g. with the National Consumer Helpline. */
+export interface Filing {
+  channel: 'nch';
+  /** Docket / complaint number issued on filing. */
+  reference: string;
+  filedAt: string;
+}
+
 export interface Claim {
   id: string;
   title: string;
@@ -78,6 +86,7 @@ export interface Claim {
   recoveredAmount?: number;
   /** Money received so far. The claim stays open until these cover the amount. */
   payments?: Payment[];
+  filings?: Filing[];
   region?: Region;
 }
 

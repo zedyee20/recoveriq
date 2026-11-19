@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { Button, Card, CategoryBadge, Chip, CurrencyPicker, Field, SectionTitle, StatusPill, colors, space, styles } from '@/components/ui';
 import { CATEGORY_LABELS } from '@/lib/analyzer';
+import { canFileWithNch, isAtNchStep, nchFiling } from '@/lib/complaint';
 import { confirm, notify } from '@/lib/dialog';
 import {
   authorize,
@@ -82,6 +83,7 @@ export default function ClaimScreen() {
             {claim.reference && <Meta label="Reference" value={claim.reference} />}
             {claim.purchaseDate && <Meta label="Date" value={claim.purchaseDate} />}
             {claim.contactEmail && <Meta label="Contact" value={claim.contactEmail} />}
+            {nchFiling(claim) && <Meta label="NCH docket" value={`${nchFiling(claim)!.reference} · filed ${formatDate(nchFiling(claim)!.filedAt)}`} />}
             <Meta label="Opened" value={formatDate(claim.createdAt)} />
           </View>
         </Card>
@@ -119,6 +121,13 @@ export default function ClaimScreen() {
           />
         ) : (
           <Button title="Edit details" variant="secondary" onPress={() => setEditing(true)} />
+        )}
+        {canFileWithNch(claim) && !isAtNchStep(claim) && (claim.status === 'draft' || claim.status === 'active') && (
+          <Button
+            title={nchFiling(claim) ? 'Consumer Helpline complaint' : 'File with the Consumer Helpline'}
+            variant="secondary"
+            onPress={() => router.push({ pathname: '/complaint/[id]', params: { id: claim.id } })}
+          />
         )}
         {claim.status === 'draft' || claim.status === 'active' ? (
           <Button
@@ -313,6 +322,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
           {isEmail && !claim.contactEmail && (
             <Text style={{ color: colors.warn, fontSize: 13 }}>No contact email on file. You can add the recipient in your email app.</Text>
           )}
+          {!isAtNchStep(claim) && (
           <View style={{ backgroundColor: colors.bg, borderRadius: 12, padding: space.md, gap: 6 }}>
             <Text style={{ fontWeight: '700', color: colors.ink }} selectable>
               {letter.subject}
@@ -321,6 +331,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
               {letter.body}
             </Text>
           </View>
+          )}
           {isEmail ? (
             <>
               <Button title="Open in email app" onPress={send} />
@@ -331,7 +342,14 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
               />
             </>
           ) : (
-            <Button title="I’ve filed it" onPress={() => update((c) => markStageSent(c, undefined, letter))} />
+            isAtNchStep(claim) ? (
+              <>
+                <Button title="File with the Consumer Helpline" onPress={() => router.push({ pathname: '/complaint/[id]', params: { id: claim.id } })} />
+                <Text style={[styles.muted, { fontSize: 12 }]}>Your complaint is filled in from this claim. Copy it into the helpline’s website or WhatsApp.</Text>
+              </>
+            ) : (
+              <Button title="I’ve filed it" onPress={() => update((c) => markStageSent(c, undefined, letter))} />
+            )
           )}
           <Button
             title="Copy text"

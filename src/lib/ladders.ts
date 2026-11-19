@@ -163,7 +163,7 @@ const IN_LEGAL_NOTICE: Stage = {
 const IN_NCH: Stage = {
   key: 'nch',
   title: 'National Consumer Helpline',
-  action: 'Register a grievance on the National Consumer Helpline (call 1915, or file online at consumerhelpline.gov.in).',
+  action: 'Register a grievance with the National Consumer Helpline. RecoverIQ fills in the details for you to copy: file online, on WhatsApp (8800001915), or by calling 1915.',
   waitDays: 30,
   channel: 'external',
   tip: 'It’s free. The helpline forwards your complaint to the company, and many companies resolve it at this stage.',
@@ -172,7 +172,7 @@ const IN_NCH: Stage = {
 const IN_CONSUMER_COMMISSION: Stage = {
   key: 'consumer_commission',
   title: 'Consumer Commission complaint',
-  action: 'File a complaint with the District Consumer Commission online through e-Daakhil (edaakhil.nic.in).',
+  action: 'File a complaint with the District Consumer Commission online on e-Jagriti (e-jagriti.gov.in).',
   waitDays: 45,
   channel: 'external',
   tip: 'You can file without a lawyer. Attach this case summary, your invoice, and all your correspondence.',
