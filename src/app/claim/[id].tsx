@@ -14,6 +14,7 @@ import {
   escalate,
   formatDate,
   formatMoney,
+  goToStage,
   ladderFor,
   markRecovered,
   markStageSent,
@@ -22,6 +23,7 @@ import {
   REGION_LABELS,
   removeEvidence,
   reopen,
+  stageSentAt,
   updateDetails,
 } from '@/lib/escalation';
 import { successFee, SUCCESS_FEE_RATE } from '@/lib/plans';
@@ -75,7 +77,7 @@ export default function ClaimScreen() {
         <NextStepPanel claim={claim} update={update} />
 
         <SectionTitle>Escalation path</SectionTitle>
-        <Ladder claim={claim} />
+        <Ladder claim={claim} update={update} />
 
         <SectionTitle>Evidence ({claim.evidence.length})</SectionTitle>
         <EvidenceList claim={claim} onRemove={(eid) => update((c) => removeEvidence(c, eid))} />
@@ -332,15 +334,22 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
   );
 }
 
-function Ladder({ claim }: { claim: Claim }) {
+function Ladder({ claim, update }: { claim: Claim; update: (fn: (c: Claim) => Claim) => void }) {
+  const { profile } = useStore();
   const ladder = ladderFor(claim);
   const current = currentStage(claim);
   const done = claim.status === 'recovered' || claim.status === 'closed';
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const [showLetter, setShowLetter] = useState(false);
+
   return (
     <Card style={{ gap: 0 }}>
       {ladder.map((s, i) => {
         const past = i < claim.stage || (i === claim.stage && !!claim.nextActionAt);
         const isCurrent = s.key === current.key && i === claim.stage && !done;
+        const isOpen = openIdx === i;
+        const sentAt = stageSentAt(claim, i);
+        const letter = isOpen && showLetter ? buildLetter(claim, profile, sentAt ? new Date(sentAt) : new Date(), i) : null;
         return (
           <View key={s.key} style={{ flexDirection: 'row', gap: space.md }}>
             <View style={{ alignItems: 'center' }}>
@@ -360,11 +369,86 @@ function Ladder({ claim }: { claim: Claim }) {
               </View>
               {i < ladder.length - 1 && <View style={{ width: 2, flex: 1, minHeight: 16, backgroundColor: past ? colors.brand : colors.line }} />}
             </View>
-            <View style={{ flex: 1, paddingBottom: i < ladder.length - 1 ? space.lg : 0 }}>
-              <Text style={{ fontWeight: isCurrent ? '700' : '600', color: isCurrent || past ? colors.ink : colors.muted }}>{s.title}</Text>
-              <Text style={[styles.muted, { fontSize: 13 }]}>
-                {s.channel === 'email' ? 'Email' : 'Outside the app'} · wait up to {s.waitDays} days
-              </Text>
+            <View style={{ flex: 1, paddingBottom: i < ladder.length - 1 ? space.lg : 0, gap: space.sm }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: isOpen }}
+                accessibilityLabel={`Step ${i + 1}: ${s.title}`}
+                onPress={() => {
+                  setOpenIdx(isOpen ? null : i);
+                  setShowLetter(false);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: isCurrent ? '700' : '600', color: isCurrent || past ? colors.ink : colors.muted }}>{s.title}</Text>
+                  <Text style={[styles.muted, { fontSize: 13 }]}>
+                    {sentAt
+                      ? `${s.channel === 'email' ? 'Sent' : 'Filed'} ${formatDate(sentAt)}`
+                      : `${s.channel === 'email' ? 'Email' : 'Outside the app'} · wait up to ${s.waitDays} days`}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.brand, fontWeight: '700', fontSize: 16 }}>{isOpen ? '−' : '+'}</Text>
+              </Pressable>
+
+              {isOpen && (
+                <View style={{ backgroundColor: colors.bg, borderRadius: 12, padding: space.md, gap: space.sm }}>
+                  <Text style={[styles.body, { fontSize: 14 }]}>{s.action}</Text>
+                  <Text style={[styles.muted, { fontSize: 13 }]}>💡 {s.tip}</Text>
+                  <Text style={[styles.muted, { fontSize: 13, fontStyle: 'italic' }]}>
+                    {isCurrent
+                      ? 'This is your current step. Use “Next step” above to act on it.'
+                      : i < claim.stage
+                        ? 'You’ve already done this step.'
+                        : done
+                          ? 'This claim is finished.'
+                          : 'You’ll reach this step if they don’t respond in time.'}
+                  </Text>
+
+                  <Button
+                    title={showLetter ? 'Hide' : s.channel === 'email' ? (sentAt ? 'View the letter you sent' : 'Preview the letter') : 'Preview the case summary'}
+                    variant="secondary"
+                    onPress={() => setShowLetter((v) => !v)}
+                  />
+                  {letter && (
+                    <View style={{ backgroundColor: colors.card, borderRadius: 10, padding: space.md, gap: 6 }}>
+                      <Text style={{ fontWeight: '700', color: colors.ink }} selectable>
+                        {letter.subject}
+                      </Text>
+                      <Text style={[styles.body, { fontSize: 13 }]} selectable>
+                        {letter.body}
+                      </Text>
+                      <Button
+                        title="Copy text"
+                        variant="ghost"
+                        onPress={async () => {
+                          await Clipboard.setStringAsync(`${letter.subject}\n\n${letter.body}`);
+                          notify('Copied', 'The text is on your clipboard.');
+                        }}
+                      />
+                    </View>
+                  )}
+
+                  {i < claim.stage && !done && (
+                    <Button
+                      title="Go back to this step"
+                      variant="ghost"
+                      onPress={async () => {
+                        if (
+                          await confirm(
+                            `Go back to “${s.title}”?`,
+                            'Use this if you moved ahead by mistake. You can send this step again, and later steps will wait until then.',
+                            'Go back',
+                          )
+                        ) {
+                          update((c) => goToStage(c, i));
+                          setOpenIdx(null);
+                        }
+                      }}
+                    />
+                  )}
+                </View>
+              )}
             </View>
           </View>
         );

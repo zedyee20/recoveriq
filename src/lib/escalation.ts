@@ -109,6 +109,20 @@ export function updateDetails(claim: Claim, details: Partial<ClaimDetails>, at =
   return { ...next, events: [...claim.events, event('note', 'Details updated', at)] };
 }
 
+/** When the request for a step was sent or filed, if it was. */
+export function stageSentAt(claim: Claim, stageIndex: number): string | undefined {
+  const title = ladderFor(claim)[stageIndex]?.title;
+  if (!title) return undefined;
+  return claim.events.find((e) => e.type === 'request_sent' && e.label.startsWith(`${title} `))?.at;
+}
+
+/** Returns to an earlier step, e.g. after escalating by mistake. Its timer restarts when it is sent again. */
+export function goToStage(claim: Claim, stageIndex: number, at = new Date().toISOString()): Claim {
+  if (stageIndex < 0 || stageIndex >= claim.stage) return claim;
+  const next = { ...claim, stage: stageIndex, nextActionAt: undefined };
+  return { ...next, events: [...claim.events, event('note', `Moved back to: ${currentStage(next).title}`, at)] };
+}
+
 export type NextStep =
   | { kind: 'prepare'; stage: Stage }
   | { kind: 'waiting'; stage: Stage; daysLeft: number }
@@ -184,8 +198,12 @@ const REASONS: Record<ClaimCategory, string> = {
   other: 'payment of money that is owed to me',
 };
 
-export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date()): Letter {
-  const stage = currentStage(claim);
+/**
+ * Builds the letter (or case summary) for the claim's current step, or for `stageIndex`
+ * when looking back at an earlier step or ahead to a later one.
+ */
+export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date(), stageIndex?: number): Letter {
+  const stage = currentStage(stageIndex === undefined ? claim : { ...claim, stage: stageIndex });
   const name = profile.fullName.trim() || '[Your name]';
   const who = claim.merchant || 'Sir or Madam';
   const ref = claim.reference ? ` (Ref: ${claim.reference})` : '';

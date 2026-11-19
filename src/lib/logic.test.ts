@@ -13,6 +13,8 @@ import {
   nextStep,
   regionOf,
   removeEvidence,
+  goToStage,
+  stageSentAt,
   uid,
   updateDetails,
 } from './escalation';
@@ -181,6 +183,9 @@ describe('personal loans and India', () => {
     assert.equal(a.merchant, 'Rohan');
     assert.equal(a.amount, 50000);
     assert.equal(a.isLikelyClaim, true);
+    assert.equal(a.date, '12 Nov 2026');
+    assert.equal(analyze('I lent Rohan Rs. 50,000 on 12-Nov-2026').date, '12-Nov-2026');
+    assert.equal(analyze('Paid ₹500 on 05.11.2026').date, '05.11.2026');
   });
 
   it('uses India escalation routes, inferring India from INR on older claims', () => {
@@ -229,5 +234,30 @@ describe('personal loans and India', () => {
     assert.equal(currentStage(asLoan).key, 'loan_reminder');
     const shortPath = updateDetails({ ...c, stage: 3 }, { category: 'other', region: 'intl' });
     assert.equal(shortPath.stage, 2);
+  });
+});
+
+describe('looking back along the path', () => {
+  const profile = { fullName: 'Mohan', email: '', plan: 'free' as const, currency: 'INR', region: 'IN' as const };
+
+  it('shows the letter sent at an earlier step, dated as sent', () => {
+    let c = makeClaim({ category: 'loan', currency: 'INR', merchant: 'Rohan', amount: 50000 });
+    c = markStageSent(c, '2026-11-19T00:00:00.000Z');
+    c = escalate(c);
+    assert.equal(stageSentAt(c, 0), '2026-11-19T00:00:00.000Z');
+    assert.equal(stageSentAt(c, 1), undefined);
+    const first = buildLetter(c, profile, new Date(stageSentAt(c, 0)!), 0);
+    assert.match(first.subject, /^Repayment of/);
+    assert.match(first.body, /Nov 26, 2026/); // 7-day deadline from the send date
+    assert.match(buildLetter(c, profile).subject, /^Reminder/); // current step unchanged
+  });
+
+  it('goes back to an earlier step and only backwards', () => {
+    const c = escalate(markStageSent(makeClaim({ category: 'loan', currency: 'INR' })));
+    const back = goToStage(c, 0);
+    assert.equal(back.stage, 0);
+    assert.equal(back.nextActionAt, undefined);
+    assert.match(back.events.at(-1)!.label, /Moved back to: Friendly request/);
+    assert.equal(goToStage(c, 2), c);
   });
 });

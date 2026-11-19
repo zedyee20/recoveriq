@@ -118,6 +118,8 @@ export function findDate(text: string): string | undefined {
     /\b(\d{4}-\d{2}-\d{2})\b/,
     new RegExp(`\\b((?:${MONTHS})[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b`, 'i'),
     new RegExp(`\\b(\\d{1,2}\\s+(?:${MONTHS})[a-z]*\\.?,?\\s+\\d{4})\\b`, 'i'),
+    new RegExp(`\\b(\\d{1,2}[-.](?:${MONTHS})[a-z]*[-.]\\d{2,4})\\b`, 'i'),
+    /\b(\d{1,2}[-.]\d{1,2}[-.]\d{4})\b/,
     /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/,
   ];
   for (const re of res) {
