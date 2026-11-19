@@ -15,6 +15,7 @@ import {
   removeEvidence,
   goToStage,
   stageSentAt,
+  stageSentLetter,
   uid,
   updateDetails,
 } from './escalation';
@@ -259,5 +260,37 @@ describe('looking back along the path', () => {
     assert.equal(back.nextActionAt, undefined);
     assert.match(back.events.at(-1)!.label, /Moved back to: Friendly request/);
     assert.equal(goToStage(c, 2), c);
+  });
+});
+
+describe('saved copies of sent letters', () => {
+  const profile = { fullName: 'Mohan', email: '', plan: 'free' as const, currency: 'INR', region: 'IN' as const };
+
+  it('keeps the sent letter unchanged after the claim is edited', () => {
+    let c = makeClaim({ category: 'loan', currency: 'INR', merchant: 'Rohan', amount: 50000 });
+    const shown = buildLetter(c, profile);
+    c = markStageSent(c, '2026-11-19T00:00:00.000Z', shown);
+    c = escalate(c);
+    c = updateDetails(c, { amount: 45000, merchant: 'Rohan Sharma' });
+    const saved = stageSentLetter(c, 0)!;
+    assert.deepEqual(saved, { subject: shown.subject, body: shown.body });
+    assert.match(saved.body, /₹50,000\.00/);
+    assert.match(saved.body, /^Hi Rohan,/);
+    assert.match(buildLetter(c, profile).body, /₹45,000\.00/); // live letters use the new details
+  });
+
+  it('keeps the latest copy when a step is sent again', () => {
+    let c = makeClaim({ category: 'loan', currency: 'INR' });
+    c = markStageSent(c, '2026-11-01T00:00:00.000Z', { subject: 'first', body: 'a' });
+    c = goToStage(escalate(c), 0);
+    c = markStageSent(c, '2026-11-10T00:00:00.000Z', { subject: 'second', body: 'b' });
+    assert.equal(stageSentLetter(c, 0)!.subject, 'second');
+    assert.equal(stageSentAt(c, 0), '2026-11-10T00:00:00.000Z');
+  });
+
+  it('has no saved copy for steps sent before copies were kept', () => {
+    const c = markStageSent(makeClaim({ category: 'loan', currency: 'INR' }));
+    assert.ok(stageSentAt(c, 0));
+    assert.equal(stageSentLetter(c, 0), undefined);
   });
 });

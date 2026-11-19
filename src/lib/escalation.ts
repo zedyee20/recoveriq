@@ -38,14 +38,23 @@ export function authorize(claim: Claim, at = new Date().toISOString()): Claim {
 }
 
 /** Records that the current stage's request was sent and starts its wait timer. */
-export function markStageSent(claim: Claim, at = new Date().toISOString()): Claim {
+/**
+ * Records that the current step was sent and starts its wait timer.
+ * Pass the letter that was shown so an exact copy is kept, unaffected by later edits.
+ */
+export function markStageSent(claim: Claim, at = new Date().toISOString(), letter?: Letter): Claim {
   const stage = currentStage(claim);
   const verb = stage.channel === 'email' ? 'sent' : 'filed';
+  const sent: ClaimEvent = {
+    ...event('request_sent', `${stage.title} ${verb}`, at),
+    stageKey: stage.key,
+    ...(letter ? { letter: { subject: letter.subject, body: letter.body } } : {}),
+  };
   return {
     ...claim,
     status: 'active',
     nextActionAt: addDays(at, stage.waitDays),
-    events: [...claim.events, event('request_sent', `${stage.title} ${verb}`, at)],
+    events: [...claim.events, sent],
   };
 }
 
@@ -111,9 +120,25 @@ export function updateDetails(claim: Claim, details: Partial<ClaimDetails>, at =
 
 /** When the request for a step was sent or filed, if it was. */
 export function stageSentAt(claim: Claim, stageIndex: number): string | undefined {
-  const title = ladderFor(claim)[stageIndex]?.title;
-  if (!title) return undefined;
-  return claim.events.find((e) => e.type === 'request_sent' && e.label.startsWith(`${title} `))?.at;
+  return sentEvent(claim, stageIndex)?.at;
+}
+
+/** The exact letter saved when a step was sent. Undefined for unsent steps, or ones sent before copies were kept. */
+export function stageSentLetter(claim: Claim, stageIndex: number): Letter | undefined {
+  return sentEvent(claim, stageIndex)?.letter;
+}
+
+/** The latest 'sent' record for a step (a step can be sent again after going back to it). */
+function sentEvent(claim: Claim, stageIndex: number): ClaimEvent | undefined {
+  const stage = ladderFor(claim)[stageIndex];
+  if (!stage) return undefined;
+  for (let i = claim.events.length - 1; i >= 0; i--) {
+    const e = claim.events[i];
+    if (e.type !== 'request_sent') continue;
+    // Older records have no stageKey, so fall back to matching the step's title in the label.
+    if (e.stageKey ? e.stageKey === stage.key : e.label.startsWith(`${stage.title} `)) return e;
+  }
+  return undefined;
 }
 
 /** Returns to an earlier step, e.g. after escalating by mistake. Its timer restarts when it is sent again. */

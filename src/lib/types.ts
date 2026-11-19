@@ -40,6 +40,10 @@ export interface ClaimEvent {
   at: string;
   type: ClaimEventType;
   label: string;
+  /** For 'request_sent': which escalation step was sent. */
+  stageKey?: string;
+  /** For 'request_sent': an exact copy of the letter as prepared, kept unchanged. */
+  letter?: { subject: string; body: string };
 }
 
 export interface Claim {

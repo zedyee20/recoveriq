@@ -24,6 +24,7 @@ import {
   removeEvidence,
   reopen,
   stageSentAt,
+  stageSentLetter,
   updateDetails,
 } from '@/lib/escalation';
 import { successFee, SUCCESS_FEE_RATE } from '@/lib/plans';
@@ -249,7 +250,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
       Platform.OS === 'ios' && result.status === 'sent'
         ? true
         : await confirm('Did you send it?', 'We’ll start the response timer once your request is sent.', 'Yes, it’s sent');
-    if (sent) update((c) => markStageSent(c));
+    if (sent) update((c) => markStageSent(c, undefined, letter));
   }
 
   return (
@@ -313,11 +314,11 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
               <Button
                 title="I sent it another way"
                 variant="secondary"
-                onPress={() => update((c) => markStageSent(c))}
+                onPress={() => update((c) => markStageSent(c, undefined, letter))}
               />
             </>
           ) : (
-            <Button title="I’ve filed it" onPress={() => update((c) => markStageSent(c))} />
+            <Button title="I’ve filed it" onPress={() => update((c) => markStageSent(c, undefined, letter))} />
           )}
           <Button
             title="Copy text"
@@ -349,7 +350,10 @@ function Ladder({ claim, update }: { claim: Claim; update: (fn: (c: Claim) => Cl
         const isCurrent = s.key === current.key && i === claim.stage && !done;
         const isOpen = openIdx === i;
         const sentAt = stageSentAt(claim, i);
-        const letter = isOpen && showLetter ? buildLetter(claim, profile, sentAt ? new Date(sentAt) : new Date(), i) : null;
+        const saved = stageSentLetter(claim, i);
+        // Sent steps show the saved copy, never a rebuilt one; unsent steps show a live preview.
+        const letter = isOpen && showLetter ? (saved ?? buildLetter(claim, profile, sentAt ? new Date(sentAt) : new Date(), i)) : null;
+        const word = s.channel === 'email' ? 'letter' : 'case summary';
         return (
           <View key={s.key} style={{ flexDirection: 'row', gap: space.md }}>
             <View style={{ alignItems: 'center' }}>
@@ -406,12 +410,24 @@ function Ladder({ claim, update }: { claim: Claim; update: (fn: (c: Claim) => Cl
                   </Text>
 
                   <Button
-                    title={showLetter ? 'Hide' : s.channel === 'email' ? (sentAt ? 'View the letter you sent' : 'Preview the letter') : 'Preview the case summary'}
+                    title={showLetter ? 'Hide' : sentAt ? `View the ${word} you ${s.channel === 'email' ? 'sent' : 'filed'}` : `Preview the ${word}`}
                     variant="secondary"
                     onPress={() => setShowLetter((v) => !v)}
                   />
                   {letter && (
                     <View style={{ backgroundColor: colors.card, borderRadius: 10, padding: space.md, gap: 6 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: saved ? colors.brandDark : sentAt ? colors.warn : colors.muted }}>
+                        {saved
+                          ? `🔒 SAVED COPY · ${formatDate(sentAt!).toUpperCase()} · CAN’T BE CHANGED`
+                          : sentAt
+                            ? 'REBUILT FROM CURRENT DETAILS · may differ from what you sent'
+                            : 'PREVIEW · updates if you edit the claim'}
+                      </Text>
+                      {saved && (
+                        <Text style={[styles.muted, { fontSize: 12 }]}>
+                          This is the {word} exactly as RecoverIQ prepared it. If you edited it in your email app, your Sent folder has the final version.
+                        </Text>
+                      )}
                       <Text style={{ fontWeight: '700', color: colors.ink }} selectable>
                         {letter.subject}
                       </Text>
