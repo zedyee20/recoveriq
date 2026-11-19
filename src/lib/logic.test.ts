@@ -16,6 +16,11 @@ import {
   goToStage,
   stageSentAt,
   stageSentLetter,
+  outstanding,
+  paidSoFar,
+  parseDayInput,
+  recordPayment,
+  reopen,
   uid,
   updateDetails,
 } from './escalation';
@@ -292,5 +297,67 @@ describe('saved copies of sent letters', () => {
     const c = markStageSent(makeClaim({ category: 'loan', currency: 'INR' }));
     assert.ok(stageSentAt(c, 0));
     assert.equal(stageSentLetter(c, 0), undefined);
+  });
+});
+
+describe('partial payments', () => {
+  const profile = { fullName: 'Mohan', email: '', plan: 'free' as const, currency: 'INR', region: 'IN' as const };
+  const sentLoan = () =>
+    escalate(markStageSent(makeClaim({ category: 'loan', currency: 'INR', merchant: 'Rohan', amount: 50000, purchaseDate: '12-Nov-2026' }), '2026-11-01T00:00:00.000Z'));
+
+  it('keeps the claim open with the balance after a partial payment', () => {
+    let c = markStageSent(sentLoan(), '2026-11-19T00:00:00.000Z'); // reminder sent, deadline Nov 26
+    c = recordPayment(c, 15000, '2026-11-20T12:00:00.000Z', '2026-11-20T12:00:00.000Z');
+    assert.equal(c.status, 'active');
+    assert.equal(paidSoFar(c), 15000);
+    assert.equal(outstanding(c), 35000);
+    assert.match(c.events.at(-1)!.label, /Received ₹15,000\.00 · ₹35,000\.00 outstanding · deadline moved to Nov 27, 2026/);
+  });
+
+  it('restarts the timer only for payments of at least 10%', () => {
+    const c = markStageSent(sentLoan(), '2026-11-19T00:00:00.000Z');
+    const big = recordPayment(c, 5000, '2026-11-24T12:00:00.000Z', '2026-11-24T12:00:00.000Z');
+    assert.equal(big.nextActionAt, '2026-12-01T12:00:00.000Z');
+    const small = recordPayment(c, 4999, '2026-11-24T12:00:00.000Z', '2026-11-24T12:00:00.000Z');
+    assert.equal(small.nextActionAt, c.nextActionAt);
+    assert.equal(outstanding(small), 45001);
+    assert.doesNotMatch(small.events.at(-1)!.label, /deadline moved/);
+  });
+
+  it('closes as recovered once payments cover the full amount', () => {
+    let c = recordPayment(sentLoan(), 15000, '2026-11-20T12:00:00.000Z');
+    c = recordPayment(c, 35000, '2026-12-05T12:00:00.000Z');
+    assert.equal(c.status, 'recovered');
+    assert.equal(c.recoveredAmount, 50000);
+    assert.equal(outstanding(c), 0);
+    assert.equal(nextStep(c).kind, 'done');
+    const reopened = reopen(c);
+    assert.equal(outstanding(reopened), 35000);
+  });
+
+  it('asks for the balance in letters and lists the payments', () => {
+    const c = recordPayment(sentLoan(), 15000, '2026-11-20T12:00:00.000Z');
+    const letter = buildLetter(c, profile);
+    assert.match(letter.subject, /Reminder: ₹35,000\.00 still to be repaid/);
+    assert.match(letter.body, /the ₹50,000\.00 I lent you on 12-Nov-2026/);
+    assert.match(letter.body, /Thank you for the ₹15,000\.00 you’ve paid so far, but ₹35,000\.00 is still outstanding/);
+    assert.match(letter.body, /Received so far: ₹15,000\.00 \(₹15,000\.00 on Nov 20, 2026\)/);
+    assert.match(letter.body, /Outstanding: ₹35,000\.00/);
+    assert.match(letter.body, /Please repay the remaining ₹35,000\.00/);
+    const notice = buildLetter({ ...c, stage: 2 }, profile);
+    assert.match(notice.body, /Outcome requested: payment of ₹35,000\.00/);
+  });
+
+  it('treats old recovered claims (no payment list) as paid', () => {
+    const old = markRecovered(makeClaim({ amount: 50 }), 40);
+    assert.equal(paidSoFar(old), 40);
+  });
+
+  it('parses typed dates, day first', () => {
+    assert.equal(new Date(parseDayInput('20-11-2026')!).getDate(), 20);
+    assert.equal(new Date(parseDayInput('05/02/2026')!).getMonth(), 1);
+    assert.ok(parseDayInput('2026-11-20'));
+    assert.equal(parseDayInput('31-02-2026'), undefined);
+    assert.equal(parseDayInput('yesterday'), undefined);
   });
 });

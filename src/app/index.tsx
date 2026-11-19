@@ -15,7 +15,7 @@ import {
   styles,
 } from '@/components/ui';
 import { CATEGORY_LABELS } from '@/lib/analyzer';
-import { formatMoney, nextStep } from '@/lib/escalation';
+import { formatMoney, nextStep, outstanding, paidSoFar } from '@/lib/escalation';
 import { useStore } from '@/lib/store';
 import type { Claim } from '@/lib/types';
 
@@ -33,8 +33,9 @@ export default function Home() {
     return {
       currency,
       otherCurrencies: claims.some((c) => !same(c)),
-      inPlay: open.filter(same).reduce((s, c) => s + c.amount, 0),
-      recovered: claims.filter(same).reduce((s, c) => s + (c.status === 'recovered' ? (c.recoveredAmount ?? c.amount) : 0), 0),
+      inPlay: open.filter(same).reduce((s, c) => s + outstanding(c), 0),
+      // Includes partial payments on claims that are still open.
+      recovered: claims.filter(same).reduce((s, c) => s + paidSoFar(c), 0),
       openCount: open.length,
       attention: open.filter((c) => {
         const n = nextStep(c);
@@ -140,9 +141,9 @@ function ClaimRow({ claim }: { claim: Claim }) {
   const step = nextStep(claim);
   const subtitle =
     step.kind === 'prepare'
-      ? `Next: ${step.stage.title}`
+      ? `${paidNote(claim)}Next: ${step.stage.title}`
       : step.kind === 'waiting'
-        ? `Waiting for reply · ${step.daysLeft}d left`
+        ? `${paidNote(claim)}Waiting · ${step.daysLeft}d left`
         : step.kind === 'overdue'
           ? step.canEscalate
             ? 'No reply — ready to escalate'
@@ -165,7 +166,9 @@ function ClaimRow({ claim }: { claim: Claim }) {
               </Text>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 6 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.ink }}>{formatMoney(claim.amount, claim.currency)}</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.ink }}>
+                {formatMoney(claim.status === 'recovered' ? paidSoFar(claim) : outstanding(claim), claim.currency)}
+              </Text>
               <StatusPill status={claim.status} overdue={step.kind === 'overdue'} />
             </View>
           </Card>
@@ -173,6 +176,11 @@ function ClaimRow({ claim }: { claim: Claim }) {
       </Pressable>
     </Link>
   );
+}
+
+function paidNote(claim: Claim): string {
+  const paid = paidSoFar(claim);
+  return paid > 0 ? `${formatMoney(paid, claim.currency, true)} received · ` : '';
 }
 
 function Welcome() {

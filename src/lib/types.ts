@@ -30,6 +30,7 @@ export type ClaimEventType =
   | 'request_sent'
   | 'escalated'
   | 'response'
+  | 'payment'
   | 'recovered'
   | 'closed'
   | 'reopened'
@@ -44,6 +45,13 @@ export interface ClaimEvent {
   stageKey?: string;
   /** For 'request_sent': an exact copy of the letter as prepared, kept unchanged. */
   letter?: { subject: string; body: string };
+}
+
+export interface Payment {
+  id: string;
+  amount: number;
+  /** ISO date the money was received. */
+  receivedAt: string;
 }
 
 export interface Claim {
@@ -68,6 +76,8 @@ export interface Claim {
   /** ISO timestamp when the user authorized RecoverIQ to prepare requests. */
   authorizedAt?: string;
   recoveredAmount?: number;
+  /** Money received so far. The claim stays open until these cover the amount. */
+  payments?: Payment[];
   region?: Region;
 }
 

@@ -77,6 +77,78 @@ export function markRecovered(claim: Claim, amount: number, at = new Date().toIS
   };
 }
 
+/* ---------- Payments ---------- */
+
+/** Parses a typed date: 20-11-2026, 20/11/2026, 20.11.2026 (day first) or 2026-11-20. Noon local time, to avoid timezone slips. */
+export function parseDayInput(input: string): string | undefined {
+  const s = input.trim();
+  let y: number, m: number, d: number;
+  let match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (match) [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  else if ((match = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(s))) [d, m, y] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  else return undefined;
+  const date = new Date(y, m - 1, d, 12);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return undefined;
+  return date.toISOString();
+}
+
+/** A payment of at least this share of the original amount restarts the current step's timer. */
+export const MEANINGFUL_PAYMENT_SHARE = 0.1;
+
+export function paidSoFar(claim: Claim): number {
+  const sum = (claim.payments ?? []).reduce((s, p) => s + p.amount, 0);
+  // Claims recovered before payments were tracked only stored a total.
+  return sum === 0 && claim.status === 'recovered' ? (claim.recoveredAmount ?? claim.amount) : sum;
+}
+
+export function outstanding(claim: Claim): number {
+  return Math.max(0, Math.round((claim.amount - paidSoFar(claim)) * 100) / 100);
+}
+
+export function lastPaymentAt(claim: Claim): string | undefined {
+  return (claim.payments ?? []).reduce<string | undefined>((a, p) => (!a || p.receivedAt > a ? p.receivedAt : a), undefined);
+}
+
+export function isMeaningfulPayment(claim: Claim, amount: number): boolean {
+  return amount >= claim.amount * MEANINGFUL_PAYMENT_SHARE;
+}
+
+/**
+ * Records money received. Paid in full closes the claim as recovered. A meaningful partial
+ * payment restarts the current step's waiting time (they're paying, so give them time);
+ * a small one lowers the balance but doesn't move the deadline.
+ */
+export function recordPayment(claim: Claim, amount: number, receivedAt: string, at = new Date().toISOString()): Claim {
+  if (!(amount > 0)) return claim;
+  const payments = [...(claim.payments ?? []), { id: uid('pay'), amount, receivedAt }];
+  const next: Claim = { ...claim, payments };
+  const left = outstanding(next);
+  const got = formatMoney(amount, claim.currency);
+
+  if (left <= 0) {
+    const total = paidSoFar(next);
+    return {
+      ...next,
+      status: 'recovered',
+      recoveredAmount: total,
+      nextActionAt: undefined,
+      events: [
+        ...claim.events,
+        event('payment', `Received ${got}`, at),
+        event('recovered', `Recovered ${formatMoney(total, claim.currency)} in full`, at),
+      ],
+    };
+  }
+
+  let label = `Received ${got} · ${formatMoney(left, claim.currency)} outstanding`;
+  let nextActionAt = claim.nextActionAt;
+  if (claim.nextActionAt && isMeaningfulPayment(claim, amount)) {
+    nextActionAt = addDays(at, currentStage(claim).waitDays);
+    label += ` · deadline moved to ${formatDate(nextActionAt)}`;
+  }
+  return { ...next, nextActionAt, events: [...claim.events, event('payment', label, at)] };
+}
+
 export function closeClaim(claim: Claim, reason: string, at = new Date().toISOString()): Claim {
   return {
     ...claim,
@@ -91,6 +163,8 @@ export function reopen(claim: Claim, at = new Date().toISOString()): Claim {
     ...claim,
     status: claim.events.some((e) => e.type === 'request_sent') ? 'active' : 'draft',
     recoveredAmount: undefined,
+    // Reopening a claim that was paid in full drops the last payment, since it's evidently not settled.
+    payments: outstanding(claim) <= 0 ? (claim.payments ?? []).slice(0, -1) : claim.payments,
     events: [...claim.events, event('reopened', 'Claim reopened', at)],
   };
 }
@@ -195,12 +269,23 @@ function factsBlock(claim: Claim): string {
   const files = claim.evidence.filter((e) => e.kind !== 'text');
   const lines = [
     `${claim.category === 'loan' ? 'Amount lent' : 'Amount owed'}: ${formatMoney(claim.amount, claim.currency)}`,
+    ...paymentLines(claim),
     claim.reference ? `Reference: ${claim.reference}` : undefined,
     claim.purchaseDate ? `${claim.category === 'loan' ? 'Date lent' : 'Date of transaction'}: ${claim.purchaseDate}` : undefined,
     files.length ? `Evidence attached: ${files.map((e) => e.name).join(', ')}` : undefined,
     hasQuoted(claim) ? 'Original correspondence: quoted below' : undefined,
   ];
   return lines.filter(Boolean).join('\n');
+}
+
+function paymentLines(claim: Claim): string[] {
+  const payments = claim.payments ?? [];
+  if (!payments.length) return [];
+  const list = payments.map((p) => `${formatMoney(p.amount, claim.currency)} on ${formatDate(p.receivedAt)}`).join(', ');
+  return [
+    `Received so far: ${formatMoney(paidSoFar(claim), claim.currency)} (${list})`,
+    `Outstanding: ${formatMoney(outstanding(claim), claim.currency)}`,
+  ];
 }
 
 function hasQuoted(claim: Claim): boolean {
@@ -232,7 +317,11 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
   const name = profile.fullName.trim() || '[Your name]';
   const who = claim.merchant || 'Sir or Madam';
   const ref = claim.reference ? ` (Ref: ${claim.reference})` : '';
-  const amount = formatMoney(claim.amount, claim.currency);
+  // `amount` is what is being asked for now: the balance after any payments.
+  const amount = formatMoney(outstanding(claim), claim.currency);
+  const original = formatMoney(claim.amount, claim.currency);
+  const paid = paidSoFar(claim) > 0 ? formatMoney(paidSoFar(claim), claim.currency) : undefined;
+  const thanks = paid ? `Thank you for the ${paid} you’ve paid so far. ${amount} is still outstanding.\n\n` : '';
   const sentBefore = claim.events.filter((e) => e.type === 'request_sent');
   const firstSent = sentBefore[0] ? formatDate(sentBefore[0].at) : undefined;
   const deadline = formatDate(addDays(now.toISOString(), stage.waitDays));
@@ -243,27 +332,27 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
   switch (stage.key) {
     case 'loan_request':
       return {
-        subject: `Repayment of ${amount} I lent you${when}`,
+        subject: paid ? `Repayment of the remaining ${amount}` : `Repayment of ${amount} I lent you${when}`,
         body:
-          `Hi ${claim.merchant || 'there'},\n\nI hope you’re doing well. I’m writing about the ${amount} I lent you${when}. ` +
-          `I’d like to ask for it back now.\n\n${factsBlock(claim)}${notes}\n\n` +
-          `Could you please repay it by ${deadline}? If paying it all at once is difficult, let me know and we can agree on instalments.\n\n` +
+          `Hi ${claim.merchant || 'there'},\n\nI hope you’re doing well. I’m writing about the ${original} I lent you${when}. ` +
+          `I’d like to ask for it back now.\n\n${thanks}${factsBlock(claim)}${notes}\n\n` +
+          `Could you please repay ${paid ? `the remaining ${amount}` : 'it'} by ${deadline}? If paying it all at once is difficult, let me know and we can agree on instalments.\n\n` +
           `Thanks,\n${name}` + quotedOriginal(claim),
       };
     case 'loan_reminder':
       return {
         subject: `Reminder: ${amount} still to be repaid`,
         body:
-          `Hi ${claim.merchant || 'there'},\n\nI’m following up${firstSent ? ` on my message from ${firstSent}` : ''} about the ${amount} I lent you${when}. ` +
-          `I haven’t received the money or a reply.\n\n${factsBlock(claim)}\n\n` +
-          `Please repay the full amount by ${deadline}. If I don’t hear from you by then, I will have to take formal steps to recover it, ` +
+          `Hi ${claim.merchant || 'there'},\n\nI’m following up${firstSent ? ` on my message from ${firstSent}` : ''} about the ${original} I lent you${when}. ` +
+          `${paid ? `Thank you for the ${paid} you’ve paid so far, but ${amount} is still outstanding.` : 'I haven’t received the money or a reply.'}\n\n${factsBlock(claim)}\n\n` +
+          `Please repay ${paid ? `the remaining ${amount}` : 'the full amount'} by ${deadline}. If I don’t hear from you by then, I will have to take formal steps to recover it, ` +
           `starting with a legal notice.\n\nRegards,\n${name}` + quotedOriginal(claim),
       };
     case 'request':
       return {
         subject: `${CATEGORY_LABELS[claim.category]} request — ${amount}${ref}`,
         body:
-          `Dear ${who},\n\nI am writing to request ${REASONS[claim.category]}.\n\n${factsBlock(claim)}${notes}\n\n` +
+          `Dear ${who},\n\nI am writing to request ${REASONS[claim.category]}.\n\n${thanks}${factsBlock(claim)}${notes}\n\n` +
           `Please process the payment of ${amount} to my original payment method, or confirm in writing when it will be issued, by ${deadline}.\n\n` +
           `If you need anything further from me, please reply to this email.\n\n${sign}` + quotedOriginal(claim),
       };
@@ -272,7 +361,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
         subject: `Second notice: ${amount} still outstanding${ref}`,
         body:
           `Dear ${who},\n\nI wrote to you${firstSent ? ` on ${firstSent}` : ''} requesting ${REASONS[claim.category]}. ` +
-          `I have not received the payment or a satisfactory response.\n\n${factsBlock(claim)}\n\n` +
+          `${paid ? `I have received ${paid}, but ${amount} is still outstanding.` : 'I have not received the payment or a satisfactory response.'}\n\n${factsBlock(claim)}\n\n` +
           `Please resolve this by ${deadline}. If it is not resolved by then, I will escalate this matter, ` +
           `which may include a payment dispute or a complaint to the relevant authority.\n\n${sign}` + quotedOriginal(claim),
       };
@@ -291,7 +380,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
         subject: `Case summary: ${CATEGORY_LABELS[claim.category]} — ${claim.merchant || 'merchant'}${ref}`,
         body:
           `Case summary for: ${stage.title}\n\nComplainant: ${name}\n${claim.category === 'loan' ? 'Borrower' : 'Business'}: ${claim.merchant || '—'}\n${factsBlock(claim)}${notes}\n\n` +
-          `What happened:\n${claim.category === 'loan' ? `I lent ${amount}${when}. I asked for repayment in writing and it has not been repaid.` : `I requested ${REASONS[claim.category]}. It has not been resolved.`}\n\n` +
+          `What happened:\n${claim.category === 'loan' ? `I lent ${original}${when}. I asked for repayment in writing and it has not been repaid.` : `I requested ${REASONS[claim.category]}. It has not been resolved.`}\n\n` +
           `Timeline:\n${claim.events.map((e) => `• ${formatDate(e.at)} — ${e.label}`).join('\n')}\n\n` +
           `Outcome requested: payment of ${amount}.` + quotedOriginal(claim),
       };

@@ -16,7 +16,14 @@ import {
   formatMoney,
   goToStage,
   ladderFor,
-  markRecovered,
+  isMeaningfulPayment,
+  lastPaymentAt,
+  MEANINGFUL_PAYMENT_SHARE,
+  outstanding,
+  paidSoFar,
+  parseDayInput,
+  recordPayment,
+  daysUntil,
   markStageSent,
   nextStep,
   regionOf,
@@ -64,9 +71,13 @@ export default function ClaimScreen() {
             </View>
             <StatusPill status={claim.status} overdue={step.kind === 'overdue'} />
           </View>
-          <Text style={{ fontSize: 34, fontWeight: '800', color: colors.ink, letterSpacing: -0.5 }}>
-            {formatMoney(claim.status === 'recovered' ? (claim.recoveredAmount ?? claim.amount) : claim.amount, claim.currency)}
-          </Text>
+          <View>
+            <Text style={{ fontSize: 34, fontWeight: '800', color: colors.ink, letterSpacing: -0.5 }}>
+              {formatMoney(claim.status === 'recovered' ? paidSoFar(claim) : outstanding(claim), claim.currency)}
+            </Text>
+            {claim.status !== 'recovered' && paidSoFar(claim) > 0 && <Text style={styles.muted}>outstanding</Text>}
+          </View>
+          <PaymentProgress claim={claim} />
           <View style={{ gap: 4 }}>
             {claim.reference && <Meta label="Reference" value={claim.reference} />}
             {claim.purchaseDate && <Meta label="Date" value={claim.purchaseDate} />}
@@ -155,13 +166,12 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
   const { profile } = useStore();
   const step = nextStep(claim);
   const [paidOpen, setPaidOpen] = useState(false);
-  const [paidAmount, setPaidAmount] = useState(claim.amount.toFixed(2));
   const [consent, setConsent] = useState(false);
   const letter = useMemo(() => buildLetter(claim, profile), [claim, profile]);
 
   if (step.kind === 'done') {
     if (claim.status !== 'recovered') return null;
-    const got = claim.recoveredAmount ?? claim.amount;
+    const got = paidSoFar(claim);
     return (
       <Card style={{ backgroundColor: colors.brandSoft, borderColor: colors.brand, gap: 6 }}>
         <Text style={{ fontSize: 28 }}>🎉</Text>
@@ -179,21 +189,19 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
   const stage = step.stage;
 
   const paidPanel = paidOpen ? (
-    <View style={{ gap: space.sm }}>
-      <Field label="Amount you received" value={paidAmount} onChangeText={setPaidAmount} keyboardType="decimal-pad" />
-      <Button
-        title="Confirm recovery"
-        onPress={() => {
-          const n = Number(paidAmount.replace(/,/g, ''));
-          if (!Number.isFinite(n) || n <= 0) return notify('Check the amount', 'Enter how much you received.');
-          update((c) => markRecovered(c, n));
-        }}
-      />
-      <Button title="Cancel" variant="ghost" onPress={() => setPaidOpen(false)} />
-    </View>
+    <PaymentForm
+      claim={claim}
+      onCancel={() => setPaidOpen(false)}
+      onSave={(amount, receivedAt) => {
+        update((c) => recordPayment(c, amount, receivedAt));
+        setPaidOpen(false);
+      }}
+    />
   ) : (
-    <Button title="They paid me" variant="secondary" onPress={() => setPaidOpen(true)} />
+    <Button title="Record a payment" variant="secondary" onPress={() => setPaidOpen(true)} />
   );
+  const last = lastPaymentAt(claim);
+  const sinceLast = last ? -daysUntil(last) : undefined;
 
   if (step.kind === 'waiting' || step.kind === 'overdue') {
     const overdue = step.kind === 'overdue';
@@ -212,10 +220,15 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
           {stage.title} sent. Deadline: {claim.nextActionAt ? formatDate(claim.nextActionAt) : '—'}.
           {nextTitle ? ` If they don’t pay, the next step is: ${nextTitle}.` : ' This is the last step in the path.'}
         </Text>
+        {last && sinceLast !== undefined && (
+          <Text style={{ fontSize: 13, color: sinceLast > 30 ? colors.warn : colors.muted, fontWeight: '600' }}>
+            Last payment: {sinceLast <= 0 ? 'today' : `${sinceLast} ${sinceLast === 1 ? 'day' : 'days'} ago`} ({formatDate(last)})
+          </Text>
+        )}
         {paidPanel}
         {!paidOpen && nextTitle && (
           <Button
-            title={overdue ? `Escalate: ${nextTitle}` : `They refused. Escalate now`}
+            title={overdue ? `Escalate: ${nextTitle}` : paidSoFar(claim) > 0 ? 'Escalate now' : 'They refused. Escalate now'}
             variant={overdue ? 'primary' : 'secondary'}
             onPress={() => update((c) => escalate(c))}
           />
@@ -328,7 +341,7 @@ function NextStepPanel({ claim, update }: { claim: Claim; update: (fn: (c: Claim
               notify('Copied', 'The text is on your clipboard.');
             }}
           />
-          {claim.stage > 0 && paidPanel}
+          {paidPanel}
         </>
       )}
     </Card>
@@ -588,5 +601,91 @@ function EditDetails({ claim, onSave, onCancel }: { claim: Claim; onSave: (d: Pa
         <Button title="Cancel" variant="ghost" onPress={onCancel} />
       </View>
     </Card>
+  );
+}
+
+function PaymentProgress({ claim }: { claim: Claim }) {
+  const paid = paidSoFar(claim);
+  const payments = claim.payments ?? [];
+  if (paid <= 0 || (claim.status === 'recovered' && payments.length === 0)) return null;
+  const pct = Math.min(100, Math.round((paid / claim.amount) * 100));
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ fontSize: 13, color: colors.ink, fontWeight: '600' }}>
+        {formatMoney(paid, claim.currency)} of {formatMoney(claim.amount, claim.currency)} received ({pct}%)
+      </Text>
+      <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' }}>
+        <View style={{ width: `${pct}%`, height: '100%', backgroundColor: colors.brand }} />
+      </View>
+      {payments.map((p) => (
+        <Text key={p.id} style={[styles.muted, { fontSize: 13 }]}>
+          • {formatMoney(p.amount, claim.currency)} on {formatDate(p.receivedAt)}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function PaymentForm({
+  claim,
+  onSave,
+  onCancel,
+}: {
+  claim: Claim;
+  onSave: (amount: number, receivedAt: string) => void;
+  onCancel: () => void;
+}) {
+  const left = outstanding(claim);
+  const [amount, setAmount] = useState(String(left));
+  const [day, setDay] = useState<'today' | 'yesterday' | 'other'>('today');
+  const [typed, setTyped] = useState('');
+  const n = Number(amount.replace(/,/g, ''));
+  const valid = Number.isFinite(n) && n > 0;
+  const full = valid && n >= left;
+  const threshold = claim.amount * MEANINGFUL_PAYMENT_SHARE;
+
+  function receivedAt(): string | undefined {
+    if (day === 'other') return parseDayInput(typed);
+    const d = new Date();
+    if (day === 'yesterday') d.setDate(d.getDate() - 1);
+    return d.toISOString();
+  }
+
+  const effect = !valid
+    ? ''
+    : full
+      ? 'This settles the claim. It will be marked as recovered.'
+      : `${formatMoney(left - n, claim.currency)} will still be outstanding. ` +
+        (!claim.nextActionAt
+          ? 'Your next letter will ask for the balance.'
+          : isMeaningfulPayment(claim, n)
+            ? `They’re paying, so the deadline restarts: ${currentStage(claim).waitDays} more days from today.`
+            : `Payments under ${formatMoney(threshold, claim.currency)} (10%) don’t move the deadline.`);
+
+  return (
+    <View style={{ gap: space.sm }}>
+      <Field label="Amount received" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+      <Text style={styles.label}>When did you receive it?</Text>
+      <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
+        <Chip label="Today" selected={day === 'today'} onPress={() => setDay('today')} />
+        <Chip label="Yesterday" selected={day === 'yesterday'} onPress={() => setDay('yesterday')} />
+        <Chip label="Another date" selected={day === 'other'} onPress={() => setDay('other')} />
+      </View>
+      {day === 'other' && (
+        <Field label="Date received" value={typed} onChangeText={setTyped} placeholder="DD-MM-YYYY" keyboardType="numbers-and-punctuation" />
+      )}
+      {effect ? <Text style={[styles.muted, { fontSize: 13 }]}>{effect}</Text> : null}
+      <Button
+        title={full ? 'Record payment & close claim' : 'Record payment'}
+        disabled={!valid}
+        onPress={() => {
+          const at = receivedAt();
+          if (!at) return notify('Check the date', 'Enter the date as DD-MM-YYYY, for example 20-11-2026.');
+          if (new Date(at).getTime() > Date.now() + 86_400_000) return notify('Check the date', 'That date is in the future.');
+          onSave(n, at);
+        }}
+      />
+      <Button title="Cancel" variant="ghost" onPress={onCancel} />
+    </View>
   );
 }
