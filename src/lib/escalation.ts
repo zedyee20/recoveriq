@@ -254,13 +254,25 @@ export interface Letter {
 }
 
 function factsBlock(claim: Claim): string {
+  const files = claim.evidence.filter((e) => e.kind !== 'text');
   const lines = [
     `Amount owed: ${formatMoney(claim.amount, claim.currency)}`,
     claim.reference ? `Reference: ${claim.reference}` : undefined,
     claim.purchaseDate ? `Date of transaction: ${claim.purchaseDate}` : undefined,
-    claim.evidence.length ? `Evidence attached: ${claim.evidence.map((e) => e.name).join(', ')}` : undefined,
+    files.length ? `Evidence attached: ${files.map((e) => e.name).join(', ')}` : undefined,
+    hasQuoted(claim) ? 'Original correspondence: quoted below' : undefined,
   ];
   return lines.filter(Boolean).join('\n');
+}
+
+function hasQuoted(claim: Claim): boolean {
+  return claim.evidence.some((e) => e.kind === 'text' && e.text?.trim());
+}
+
+/** Pasted text can't be attached as a file, so it's quoted at the end of the letter instead. */
+function quotedOriginal(claim: Claim): string {
+  const texts = claim.evidence.filter((e) => e.kind === 'text' && e.text?.trim());
+  return texts.map((e) => `\n\n----- ${e.name} -----\n${e.text!.trim()}`).join('');
 }
 
 const REASONS: Record<ClaimCategory, string> = {
@@ -291,7 +303,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
         body:
           `Dear ${who},\n\nI am writing to request ${REASONS[claim.category]}.\n\n${factsBlock(claim)}${notes}\n\n` +
           `Please process the payment of ${amount} to my original payment method, or confirm in writing when it will be issued, by ${deadline}.\n\n` +
-          `If you need anything further from me, please reply to this email.\n\n${sign}`,
+          `If you need anything further from me, please reply to this email.\n\n${sign}` + quotedOriginal(claim),
       };
     case 'follow_up':
       return {
@@ -300,7 +312,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
           `Dear ${who},\n\nI wrote to you${firstSent ? ` on ${firstSent}` : ''} requesting ${REASONS[claim.category]}. ` +
           `I have not received the payment or a satisfactory response.\n\n${factsBlock(claim)}\n\n` +
           `Please resolve this by ${deadline}. If it is not resolved by then, I will escalate this matter, ` +
-          `which may include a payment dispute or a complaint to the relevant authority.\n\n${sign}`,
+          `which may include a payment dispute or a complaint to the relevant authority.\n\n${sign}` + quotedOriginal(claim),
       };
     case 'final_demand':
       return {
@@ -309,7 +321,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
           `Dear ${who},\n\nThis is my final demand for payment of ${amount}, which remains outstanding despite my previous requests` +
           `${firstSent ? ` (first sent ${firstSent})` : ''}.\n\n${factsBlock(claim)}\n\n` +
           `If I do not receive full payment by ${deadline}, I intend to file a claim in small claims court without further notice, ` +
-          `and will seek court costs where permitted.\n\n${sign}`,
+          `and will seek court costs where permitted.\n\n${sign}` + quotedOriginal(claim),
       };
     default:
       // External stages (chargeback, regulator, appeal) need a case summary rather than a letter.
@@ -319,7 +331,7 @@ export function buildLetter(claim: Claim, profile: Profile, now: Date = new Date
           `Complaint summary for: ${stage.title}\n\nComplainant: ${name}\nBusiness: ${claim.merchant || '—'}\n${factsBlock(claim)}${notes}\n\n` +
           `What happened:\nI requested ${REASONS[claim.category]}. The business has not resolved it.\n\n` +
           `Timeline:\n${claim.events.map((e) => `• ${formatDate(e.at)} — ${e.label}`).join('\n')}\n\n` +
-          `Outcome requested: payment of ${amount}.`,
+          `Outcome requested: payment of ${amount}.` + quotedOriginal(claim),
       };
   }
 }

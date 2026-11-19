@@ -124,6 +124,19 @@ describe('escalation', () => {
     assert.match(second.subject, /Second notice/);
     assert.match(second.body, /Oct 1, 2026/);
 
+    const withText = {
+      ...c,
+      evidence: [
+        { id: 'e1', kind: 'text' as const, name: 'Original message', text: 'Your refund was rejected.', addedAt: c.createdAt },
+        { id: 'e2', kind: 'image' as const, name: 'receipt.jpg', uri: 'file:///r.jpg', addedAt: c.createdAt },
+      ],
+    };
+    const quoted = buildLetter(withText, profile);
+    assert.match(quoted.body, /Evidence attached: receipt\.jpg\n/);
+    assert.doesNotMatch(quoted.body, /Evidence attached: .*Original message/);
+    assert.match(quoted.body, /Original correspondence: quoted below/);
+    assert.match(quoted.body, /----- Original message -----\nYour refund was rejected\.$/);
+
     const chargeback = buildLetter({ ...c, stage: 2 }, profile);
     assert.match(chargeback.subject, /Case summary/);
   });
